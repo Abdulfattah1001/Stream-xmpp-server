@@ -1,0 +1,334 @@
+package streammessenger.res;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.List;
+import java.util.logging.Logger;
+
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+
+public class DatabaseManagement {
+    private final String username;
+    private final String password;
+    private final String db;
+    private Connection connection = null;
+    private final Logger logger = Logger.getLogger("database_logger");
+    private static DatabaseManagement instance = null;
+
+    private DatabaseManagement(String password, String username, String db){
+        this.username = username;
+        this.password = password;
+        this.db = db;
+    }
+
+    public void connects() throws SQLException{
+        try {
+            connection = DriverManager.getConnection("jdbc:mysql://localhost:3306/"+db, username, password);
+        } catch (SQLException e) {
+            throw new SQLException("Error connecting to the database: "+e.getMessage());
+        }
+    }
+
+
+    public static DatabaseManagement getInstance(String password, String username, String db){
+        if(instance == null){
+            instance = new DatabaseManagement(password, username, db);
+        }
+
+        return instance;
+    }
+
+    /**
+     * It checks whether the user already exists in the database
+     * @param contactId The string representation of the user contact id
+     * @return Boolean value representing the user status
+     */
+    private boolean isUserExists(@Nonnull String contactId){
+        try {
+            String query = "SELECT phone_number FROM users WHERE phone_number = ?";
+            PreparedStatement preparedStatement = connection.prepareStatement(query);
+            preparedStatement.setString(1, contactId);
+            ResultSet resultSet = preparedStatement.executeQuery();
+            if(resultSet.next()) return true;
+        } catch (Exception e) {
+            logger.info(() -> "Exception occurred: "+e.getMessage());
+        }
+
+        return false;
+    }
+
+    /**
+     * Authenticate based on the user Id passed and returns either false or true
+     * @param contactId The phone_number of the user
+     * @param password The password of the user
+     * @return A boolean value either false or true
+     * @deprecated This method is no longer in use as the
+     * authentication mechanism is now based on token
+     */
+    public boolean authenticateUserID(@Nonnull String contactId, @Nonnull String password){
+        try{
+            String query = "SELECT * FROM users WHERE phone_number = ? LIMIT 1";
+            PreparedStatement preparedStatement = connection.prepareStatement(query);
+            preparedStatement.setString(1, contactId);
+            ResultSet resultSet = preparedStatement.executeQuery();
+            resultSet.next();
+            String pswd = resultSet.getString("password");
+            if(pswd.equals(Base64.getEncoder().encodeToString(password.getBytes()))) return true;
+            //if(resultSet.next()) return true;
+        }catch(SQLException exception){
+            logger.info(() -> "Exception occurred authenticating user with error: "+exception.getMessage());
+        }
+        return false;
+    }
+
+    /* 
+    public boolean authenticateUserToken(String phone_number){
+        if(connection == null) logger.info("Database is empty");
+        try{
+            String query = "SELECT * FROM users WHERE phone_number = ?";
+            PreparedStatement statement = connection.prepareStatement(query);
+            statement.setString(1, phone_number);
+            ResultSet resultSet = statement.executeQuery();
+            if(resultSet.next()) return true;
+        }catch(SQLException exception){
+            logger.info("Error occurred while getting user from the database: "+exception.getMessage());
+        }
+        return false;
+    }*/
+
+    /**
+     * Creates a new user with column {phone_number, user_id, status}
+     * @param contactid The phone_number of the user
+     * @param status The status of the user 
+     * @param userId The unique user identity of the user
+     * @throws SQLException
+     */
+    public void newUser(String contactid, @Nullable String status, @Nonnull String userId) throws SQLException {
+        if(isUserExists(contactid)) return; //If the user exists already on the database
+
+        if(connection != null){
+            String updateString = "INSERT INTO users (user_id, phone_number, status) VALUES(?,?,?)";
+            PreparedStatement preparedStatement = connection.prepareStatement(updateString);
+            preparedStatement.setString(1, userId);
+            preparedStatement.setString(2, contactid);
+            preparedStatement.setString(3, status);
+            @SuppressWarnings("unused")
+            int result = preparedStatement.executeUpdate();
+        }
+    }
+
+
+    /*
+     * -----------THE AUTHENTICATE MECHANISM STARTS HERE----------------------
+     */
+
+
+     /**
+      * Checks if the user exists based on their phone number
+      * @param phone_number The phone_number of the user in ES614 format
+      * @return A boolean value that represents the state of the user
+      */
+    public boolean is_user_exists_by_phone_number(String phone_number){
+
+        if(connection != null){
+            try{
+                String query = "SELECT * FROM users WHERE phone_number = ? LIMIT 1";
+                PreparedStatement preparedStatement = connection.prepareStatement(query);
+                ResultSet result = preparedStatement.executeQuery();
+                if(result.next()) return true;
+            }catch(SQLException exception){}
+        }
+        return false;
+    }
+
+    /**
+     * Check if the user exists based on the user id
+     * @param user_id The user id of the user
+     * @return Boolean state of the user state
+     */
+    public boolean is_user_exists_by_uid(String user_id){
+
+        if(connection != null){
+            try {
+                String query = "SELECT * FROM users WHERE user_id = ? LIMIT 1";
+                PreparedStatement preparedStatement = connection.prepareStatement(query);
+                preparedStatement.setString(1, user_id);
+                ResultSet result = preparedStatement.executeQuery();
+
+                if(result.next()) return true;
+            } catch (SQLException exception) {
+                
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Authenticate user based on the user id of the user
+     * @param user_id The user id of the user
+     * @return boolean state of the authentication status
+     */
+    public boolean authenticateUserByUID(String user_id){
+
+        if(connection != null){
+            try{
+                String query = "SELECT * FROM users WHERE user_id = ? LIMIT 1";
+                PreparedStatement preparedStatement = connection.prepareStatement(query);
+                preparedStatement.setString(1, user_id);
+                ResultSet result = preparedStatement.executeQuery();
+
+                if(result.next()) return true;
+
+            }catch(SQLException exception){}
+        }
+        return false;
+    }
+    
+
+    /**
+     * Authenticate the user based on the phone number
+     * @param phone_number The phone number of the user in ES614 format
+     * @return A boolean value representing the state of the user status
+     */
+    public boolean authenticatedUserByPhoneNumber(String phone_number){
+        if(connection != null){
+            try {
+                String query = "SELECT * FROM users WHERE phone_number == ?";
+                PreparedStatement preparedStatement = connection.prepareStatement(query);
+                preparedStatement.setString(1, phone_number);
+                ResultSet resultSet  = preparedStatement.executeQuery();
+
+                return resultSet.next();
+            }catch (SQLException exception){
+                logger.info("Error occured checking for user: "+exception.getMessage());
+            }
+        }
+
+        return false;
+    }
+    
+    /**
+     * -------------- THE MESSAGE CACHING MECHANISM STARTS HERE -------------------
+    */
+    public void offline_message(String sender_contact, String receiver_contact, String message_content){
+        if(connection != null){
+            String query = "INSERT INTO offline_messages(sender_contact, receiver_contact, message_content) VALUES(?,?,?)";
+            try{
+                PreparedStatement preparedStatement = connection.prepareStatement(query);
+                preparedStatement.setString(1, sender_contact);
+                preparedStatement.setString(2, sender_contact);
+                preparedStatement.setString(3, message_content);
+
+                preparedStatement.execute();
+
+            }catch(SQLException exception){
+                logger.info("Error occurred queing message for offline: "+exception.getMessage());;
+            }
+        }
+    }
+
+
+    public List<HashMap<String, String>> check_for_offline_message(String user_id){
+        List<HashMap<String, String>> offline_messages = new ArrayList<>();
+        try{
+            String message_query = "SELECT * FROM offline_messages WHERE receiver_id = ?";
+            PreparedStatement message_statement = connection.prepareStatement(message_query);
+            message_statement.setString(1, user_id);
+            ResultSet resultSet = message_statement.executeQuery();
+
+            while(resultSet.next()){
+                HashMap<String, String> message = new HashMap<>();
+                message.put("sender_contact", resultSet.getString("sender_contact"));
+                message.put("receiver_contact", resultSet.getString("receiver_contact"));
+                message.put("message_type", resultSet.getString("TEXT"));
+                message.put("timestamp", resultSet.getString("timestamp"));
+
+                offline_messages.add(message);
+            }
+
+            logger.info("Offline message length is: "+String.valueOf(offline_messages.size()));
+
+        }catch(SQLException exception){
+
+            logger.info("Offline message length is: "+String.valueOf(offline_messages.size()));
+            logger.info("Error occurred getting the user offline message");
+        }
+        //TODO: Return the list of the user offline_message which can only happened when the uninstall the app or the user phone is turn off
+        return offline_messages;
+    }
+
+
+    /**
+     * Retrieves the user rosters list 
+     * @param jid The user JID
+     * @return A List of HashMap<String, Object> containing the user roster items
+     */
+    public List<HashMap<String, Object>> getRosters(@Nonnull String jid){
+        ArrayList<HashMap<String, Object>> users = new ArrayList<>();
+        try{
+            String query = "SELECT * FROM rosters WHERE user_id = ?";
+            PreparedStatement preparedStatement = connection.prepareStatement(query);
+            preparedStatement.setString(1, jid);
+            ResultSet resultSet = preparedStatement.executeQuery();
+            while(resultSet.next()){
+                HashMap<String, Object> user = new HashMap<>();
+                user.put("display_name", resultSet.getString("display_name"));
+                user.put("phone_number", resultSet.getString("phone_number"));
+                user.put("subscription", resultSet.getString("subscription"));
+                users.add(user);
+            }
+        }catch(SQLException exception){
+            logger.info(() -> "Error occurred :"+exception.getMessage());
+        }
+        return users;
+    }
+
+    /**
+     * -----------------THE ROSTER MANAGEMENT STARTS HERE---------------------
+     */
+    public void updateRoster(String userId, String jid, String nickname){
+        try{
+            String query = "INSERT INTO rosters (user_id, contact_id, nickname) VALUES(?,?,?)";
+            PreparedStatement preparedStatement = connection.prepareStatement(query);
+            preparedStatement.setString(1, userId);
+            preparedStatement.setString(2, jid);
+            preparedStatement.setString(3, nickname);
+            //preparedStatement.setString(4, bio);
+            @SuppressWarnings("unused")
+            int result = preparedStatement.executeUpdate();
+        }catch(SQLException exception){
+            logger.info(() -> "Error occurred :"+exception.getMessage());
+        }
+    }
+
+    public void deleteItemFromRoster(String userId, String contactId){
+        try{
+            String query = "DELETE FROM TABLE rosters WHERE user_id = ? AND phone_number = ?";
+            PreparedStatement preparedStatement = connection.prepareStatement(query);
+            preparedStatement.setString(1, userId);
+            preparedStatement.setString(2, contactId);
+            @SuppressWarnings("unused")
+            int result = preparedStatement.executeUpdate();
+        }catch(SQLException exception){
+            logger.info(() -> "Error occurred processing the delete item from roster");
+        }
+    }
+
+
+    public void cache_message_for_offline_user(String receiver_id, String sender_id, String content){
+        if(connection != null){
+            try{
+                String query = "INSERT INTO offline_messages VALUES(?,?,?,?)";
+                @SuppressWarnings("unused")
+                PreparedStatement statement = connection.prepareStatement(query);
+            }catch(SQLException exception){}
+        }
+    }
+}

@@ -41,7 +41,6 @@ public class DatabaseManagement {
         if(instance == null){
             instance = new DatabaseManagement(password, username, db);
         }
-
         return instance;
     }
 
@@ -293,7 +292,10 @@ public class DatabaseManagement {
     /**
      * -----------------THE ROSTER MANAGEMENT STARTS HERE---------------------
      */
+
+    
     public void updateRoster(String userId, String jid, String nickname){
+        //TODO: Check if the item already exist, thereby not performing the operation
         try{
             String query = "INSERT INTO rosters (user_id, contact_id, nickname) VALUES(?,?,?)";
             PreparedStatement preparedStatement = connection.prepareStatement(query);
@@ -304,7 +306,37 @@ public class DatabaseManagement {
             @SuppressWarnings("unused")
             int result = preparedStatement.executeUpdate();
         }catch(SQLException exception){
-            logger.info(() -> "Error occurred :"+exception.getMessage());
+            logger.info(() -> "Error occurred  :"+exception.getMessage());
+        }
+    }
+
+
+    /**
+     * Takes in a list of hashmap of String 
+     * to update insert into the rosters column
+     * of the xmpp database
+     * @param rosters The list of the items to insert
+     */
+    public void insertBulkItems(List<HashMap<String, String>> rosters){
+        try{
+            //String insertQuery = "INSERT INTO rosters VALUES (user_id, contact_id, sub_status)";
+            //PreparedStatement preparedStatement = connection.prepareStatement(db);
+            String insertStatement = "INSERT INTO rosters (user_id, contact_id, nickname) VALUES (?,?,?) ON DUPLICATE KEY UPDATE nickname = VALUES(nickname)";
+            PreparedStatement preparedStatement = connection.prepareStatement(insertStatement);
+            connection.setAutoCommit(false); //Batch mode
+
+            for(HashMap<String, String> roster : rosters){
+                preparedStatement.setString(1, roster.get("user_id"));
+                preparedStatement.setString(2, roster.get("contact_id"));
+                preparedStatement.setString(3, roster.get("nickname"));
+
+                preparedStatement.addBatch(); //Append to batch insert
+            }
+
+            preparedStatement.executeBatch();
+            connection.commit();
+        }catch(SQLException exception){
+
         }
     }
 
@@ -322,6 +354,63 @@ public class DatabaseManagement {
     }
 
 
+    /**
+     * Updates the roster item for the user of user_id
+     * @param user_id The user roster that needs to be updated
+     * @param contact_id The user item to update
+     * @param status The new status
+     */
+    public void updateRosterSubscription(@Nonnull String user_id, @Nonnull String contact_id, SubscriptionStatus status){
+        try{
+            String updateQuery = "UPDATE rosters SET sub_status = ? WHERE user_id = ? AND contact_id = ?";
+            PreparedStatement preparedStatement = connection.prepareStatement(updateQuery);
+            preparedStatement.setString(1, updateQuery); //TODO: Set it equal to the status
+            preparedStatement.setString(2, user_id);
+            preparedStatement.setString(3, contact_id);
+
+            preparedStatement.executeUpdate(); /// Updates the database to the require value
+        }catch(SQLException exception){
+            logger.info("Error occurred updating user roster item == "+exception.getMessage());
+        }
+    }
+
+
+    /**
+     * Gets the subscription status of the query user inorder to properly route the
+     * presence infomation to them
+     * @param jid The unique uid of the receiver
+     * @param contact_id The unique uid of the sender
+     * @return A SubscriptionStatus representing the status of the relationship 
+     * between the two users
+     */
+    public SubscriptionStatus getSubscriptionStatus(String jid, String contact_id){
+        logger.info("Called database");
+        try{
+            String query = "SELECT subscription_status FROM rosters WHERE user_id = ? AND contact_id = ?";
+            PreparedStatement preparedStatement = connection.prepareStatement(query);
+
+            preparedStatement.setString(1, jid);
+            preparedStatement.setString(2, contact_id);
+
+            ResultSet set = preparedStatement.executeQuery();
+            
+
+            logger.info("Here also");
+            if(set.next()){
+                String status = set.getString("subscription_stauts");
+
+                logger.info("Status is "+status);
+                return SubscriptionStatus.fromString(status);
+            }
+        }catch(SQLException exception){
+            logger.info("Error occurred getting the user status");
+        }
+
+        return SubscriptionStatus.BOTH;
+    }
+
+    
+
     public void cache_message_for_offline_user(String receiver_id, String sender_id, String content){
         if(connection != null){
             try{
@@ -330,5 +419,19 @@ public class DatabaseManagement {
                 PreparedStatement statement = connection.prepareStatement(query);
             }catch(SQLException exception){}
         }
+    }
+
+    /**
+     * It delete a message after it has been 
+     * rerouted to the destination from the cache
+     * table
+     * @param message_id The message id
+     */
+    public void delete_message(String message_id){
+        try{
+            String deleteStatement = "DELETE FROM offline_messages WHERE messasge_id = ?";
+            PreparedStatement preparedStatement = connection.prepareStatement(deleteStatement);
+            preparedStatement.executeUpdate();
+        }catch(SQLException exception){}
     }
 }

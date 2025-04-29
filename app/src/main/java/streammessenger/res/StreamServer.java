@@ -25,8 +25,8 @@ public class StreamServer {
     @SuppressWarnings("unused")
     private final String address;
     private final Logger logger = Logger.getLogger("stream_server");
-    @SuppressWarnings("unused")
-    public volatile static ConcurrentHashMap<String, Socket>  connections = new ConcurrentHashMap<String, Socket>();
+    
+    public volatile  static ConcurrentHashMap<String, Socket>  connections = new ConcurrentHashMap<String, Socket>();
     private final DatabaseManagement databaseManagement;
 
     private static StreamServer instance = null;
@@ -229,6 +229,11 @@ public class StreamServer {
                                 infoQueryParser.InfoQueryTagParser();
                                 break;
 
+                            case "presence":
+                                logger.info("processing presence tag....");
+                                PresenceTagParser presenceTagParser = new PresenceTagParser(connection, xmlEventReader, startElement);
+                                presenceTagParser.parse();
+                                break;
                             default:
                                 break;
                         }

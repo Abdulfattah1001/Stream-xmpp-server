@@ -6,6 +6,7 @@ import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.net.Socket;
 import java.util.Properties;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 
 import javax.xml.stream.XMLEventReader;
@@ -109,15 +110,18 @@ public class AuthParser {
                             OutputStream os = socketConnection.getOutputStream();
                             OutputStreamWriter writer = new OutputStreamWriter(os);
 
+                            logger.info("Success");
+
                             writer.write("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl' />");
                             
-                            StreamServer.connections.put(contact, socketConnection);
+                            StreamServer.connections.put("+2349063109106", socketConnection);
 
-                            connectionHandler.setUserContact(contact);
+                            connectionHandler.setUserContact("+2349063109106");
                         }catch(IOException exception){
                             logger.info("Error occurred: "+exception.getMessage());
                         }
                     }else{
+                        logger.info("Error ");
                         try{
                             OutputStream os = socketConnection.getOutputStream();
                             OutputStreamWriter writer = new OutputStreamWriter(os);

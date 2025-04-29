@@ -99,4 +99,12 @@ public class MessageTagParser {
             db.offline_message(sender_contact, receiver_contact, content);
         }
     }
+
+    /**
+     * Notify the receiver of the message
+     * @param receiver_id
+     * @param sender_id
+     * @param message_content
+     */
+    private void send_notification(String receiver_id, String sender_id, String message_content){}
 }

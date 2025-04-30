@@ -8,9 +8,6 @@ import java.util.logging.Logger;
 import javax.xml.namespace.QName;
 import javax.xml.stream.XMLEventReader;
 import javax.xml.stream.events.StartElement;
-import javax.xml.stream.events.XMLEvent;
-
-import streammessenger.res.StreamServer.ConnectionHandler;
 
 
 public class PresenceTagParser {
@@ -18,7 +15,6 @@ public class PresenceTagParser {
     private final Socket connection;
     @SuppressWarnings("unused")
     private final XMLEventReader reader;
-    @SuppressWarnings("unused")
     private final StartElement element;
 
     private final static Logger logger = Logger.getLogger("presence_logger");
@@ -30,22 +26,26 @@ public class PresenceTagParser {
     }
 
     public void parse(){
-        String to = "+2349063109106";
-        String from = "+2349063109106";
-        
+        String to = element.getAttributeByName(new QName("to")).getValue();
+
+        String from = element.getAttributeByName(new QName("from")).getValue();
+
+        logger.info(()-> "The receiver is "+to);
+
+        logger.info(()-> "The initiator is "+from);
         
         if(to != null && from != null){
             DatabaseManagement db = DatabaseManagement.getInstance(CredentialManager.getPassword(), CredentialManager.getDatabaseName(), CredentialManager.getDatabaseUsername());
             SubscriptionStatus status = db.getSubscriptionStatus(to, from);
 
+            //Checking the subscription status of the sender to the receiver
             if(status == SubscriptionStatus.BOTH || status == SubscriptionStatus.TO){
-                
-                if(StreamServer.connections.containsKey("+2349063109106")){ //If the user is online
-                    Socket socket = StreamServer.connections.get("+2349063109106");
-                    if(socket.isConnected()){
+                if(StreamServer.connections.containsKey(to)){ //If the user is online
+                    Socket socket = StreamServer.connections.get(to); //Getting the connections
+                    if(socket.isConnected()){ //If the connection is still available, then the user is online
                         try{
                             OutputStreamWriter writer = new OutputStreamWriter(socket.getOutputStream());
-                            writer.write("<presence from='"+to+"'></presence>");
+                            writer.write("<presence from='"+from+"'><show> Online </show></presence>");//Sends the connection status to the sender
 
                             writer.flush();
                         }catch(IOException exception){
@@ -53,18 +53,18 @@ public class PresenceTagParser {
                         }
                     }
                 }else{
-                    
                     //TODO:Get the last seen of the user from the database
                     try{
-                        Socket socket = StreamServer.connections.get("+2349063109106");
+                        Socket socket = StreamServer.connections.get(from); ///Get the socket connection of the sender
                         OutputStreamWriter writer = new OutputStreamWriter(socket.getOutputStream());
-                        writer.write("<presence>\n"
-                        +"<show> \n"
-                        +"Last seen 9:00PM 2025\n"
-                        +" </show>\n"
-                        +"</presence>\n");
+                        writer.write("""
+                            <presence> 
+                                <show> Last seen 9:00PM 2025 </show>
+                            </presence>
+                        """);
 
                         writer.flush();
+                        logger.info("Sent here ...");
 
                     }catch(IOException exception){
                         logger.info("Error occurred: "+exception.getMessage());
@@ -74,20 +74,4 @@ public class PresenceTagParser {
             
         }
     }
-
-    /**
-     * Fetches the user presence infomation
-     * @param user_phone_number
-     */
-    //public void fetch_user_presence_info(String user_phone_number){}
-
-    //TODO: The server looks up the user roster upon receiving a presenc info
-    // and checks for the sub status to see those who are eligible to be notified
-    // for the current user presence
-
-    //What to look up for later
-    /**
-     * Roster presence flooding
-     * Presence probing
-     */
 }

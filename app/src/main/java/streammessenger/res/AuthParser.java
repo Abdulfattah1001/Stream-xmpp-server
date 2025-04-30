@@ -114,9 +114,11 @@ public class AuthParser {
 
                             writer.write("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl' />");
                             
-                            StreamServer.connections.put("+2349063109106", socketConnection);
+                            StreamServer.connections.put(contact, socketConnection);
 
-                            connectionHandler.setUserContact("+2349063109106");
+                            connectionHandler.setUserContact(contact);
+
+                            logger.info("User is "+contact);
                         }catch(IOException exception){
                             logger.info("Error occurred: "+exception.getMessage());
                         }

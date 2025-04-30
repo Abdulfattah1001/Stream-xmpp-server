@@ -51,7 +51,7 @@ public class DatabaseManagement {
      */
     private boolean isUserExists(@Nonnull String contactId){
         try {
-            String query = "SELECT phone_number FROM users WHERE phone_number = ?";
+            String query = "SELECT contact_id FROM users WHERE contact_id = ?";
             PreparedStatement preparedStatement = connection.prepareStatement(query);
             preparedStatement.setString(1, contactId);
             ResultSet resultSet = preparedStatement.executeQuery();
@@ -71,9 +71,10 @@ public class DatabaseManagement {
      * @deprecated This method is no longer in use as the
      * authentication mechanism is now based on token
      */
+    @Deprecated
     public boolean authenticateUserID(@Nonnull String contactId, @Nonnull String password){
         try{
-            String query = "SELECT * FROM users WHERE phone_number = ? LIMIT 1";
+            String query = "SELECT * FROM users WHERE contact_id = ? LIMIT 1";
             PreparedStatement preparedStatement = connection.prepareStatement(query);
             preparedStatement.setString(1, contactId);
             ResultSet resultSet = preparedStatement.executeQuery();
@@ -113,11 +114,11 @@ public class DatabaseManagement {
         if(isUserExists(contactid)) return; //If the user exists already on the database
 
         if(connection != null){
-            String updateString = "INSERT INTO users (user_id, phone_number, status) VALUES(?,?,?)";
+            String updateString = "INSERT INTO users (user_id, contact_id) VALUES(?,?)";
             PreparedStatement preparedStatement = connection.prepareStatement(updateString);
             preparedStatement.setString(1, userId);
             preparedStatement.setString(2, contactid);
-            preparedStatement.setString(3, status);
+            //preparedStatement.setString(3, status);
             @SuppressWarnings("unused")
             int result = preparedStatement.executeUpdate();
         }
@@ -138,7 +139,7 @@ public class DatabaseManagement {
 
         if(connection != null){
             try{
-                String query = "SELECT * FROM users WHERE phone_number = ? LIMIT 1";
+                String query = "SELECT * FROM users WHERE contact_id = ? LIMIT 1";
                 PreparedStatement preparedStatement = connection.prepareStatement(query);
                 ResultSet result = preparedStatement.executeQuery();
                 if(result.next()) return true;
@@ -199,7 +200,7 @@ public class DatabaseManagement {
     public boolean authenticatedUserByPhoneNumber(String phone_number){
         if(connection != null){
             try {
-                String query = "SELECT * FROM users WHERE phone_number == ?";
+                String query = "SELECT * FROM users WHERE contact_id == ?";
                 PreparedStatement preparedStatement = connection.prepareStatement(query);
                 preparedStatement.setString(1, phone_number);
                 ResultSet resultSet  = preparedStatement.executeQuery();
@@ -297,11 +298,11 @@ public class DatabaseManagement {
     public void updateRoster(String userId, String jid, String nickname){
         //TODO: Check if the item already exist, thereby not performing the operation
         try{
-            String query = "INSERT INTO rosters (user_id, contact_id, nickname) VALUES(?,?,?)";
+            String query = "INSERT INTO rosters (user_id, contact_id /**, nickname*/) VALUES(?,?)";
             PreparedStatement preparedStatement = connection.prepareStatement(query);
             preparedStatement.setString(1, userId);
             preparedStatement.setString(2, jid);
-            preparedStatement.setString(3, nickname);
+            //preparedStatement.setString(3, nickname);
             //preparedStatement.setString(4, bio);
             @SuppressWarnings("unused")
             int result = preparedStatement.executeUpdate();
@@ -384,7 +385,6 @@ public class DatabaseManagement {
      * between the two users
      */
     public SubscriptionStatus getSubscriptionStatus(String jid, String contact_id){
-        logger.info("Called database");
         try{
             String query = "SELECT subscription_status FROM rosters WHERE user_id = ? AND contact_id = ?";
             PreparedStatement preparedStatement = connection.prepareStatement(query);
@@ -395,15 +395,14 @@ public class DatabaseManagement {
             ResultSet set = preparedStatement.executeQuery();
             
 
-            logger.info("Here also");
             if(set.next()){
-                String status = set.getString("subscription_stauts");
+                String status = set.getString("subscription_status");
 
                 logger.info("Status is "+status);
                 return SubscriptionStatus.fromString(status);
             }
         }catch(SQLException exception){
-            logger.info("Error occurred getting the user status");
+            logger.info("Error occurred getting the user status: "+exception.getMessage());
         }
 
         return SubscriptionStatus.BOTH;

@@ -213,7 +213,6 @@ public class StreamServer {
                                 break;
                                 
                             case "auth":
-                                logger.info(() -> "Auth called");
                                 AuthParser authParser = new AuthParser(xmlEventReader, startElement, databaseManagement,connection, this);
                                 authParser.parseAuthXMLStream();
                                 break;
@@ -224,7 +223,6 @@ public class StreamServer {
                                 break;
 
                             case "iq": //The Roster presence information enquiries
-                                logger.info("Info Query called....");
                                 InfoQueryParser infoQueryParser = new InfoQueryParser(connection, xmlEventReader, startElement, databaseManagement);
                                 infoQueryParser.InfoQueryTagParser();
                                 break;

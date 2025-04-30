@@ -26,15 +26,11 @@ public class InfoQueryParser {
 
     public void InfoQueryTagParser() throws XMLStreamException {
         
-        logger.info(() -> "Processing the info query tag ...");
         if(iqStartElement != null){
             String iqType = iqStartElement.getAttributeByName(new QName("type")).getValue(); //The type of InfoQuery Tag
             String userJID = iqStartElement.getAttributeByName(new QName("from")).getValue(); //The userId of the current user
-            logger.info("Type is "+iqType +" And the contact is: "+userJID);
             if(StreamServer.connections.containsKey(userJID)) logger.info("Wow");
 
-            //if(!StreamServer.connections.contains(userJID)) throw new IllegalStateException("Error the initiating is not connected");
-            //A InfoQuery to set or update user roster
             if(iqType.equals("set")){
 
                 while(reader.hasNext()){

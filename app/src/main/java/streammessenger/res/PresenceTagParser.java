@@ -30,9 +30,6 @@ public class PresenceTagParser {
 
         String from = element.getAttributeByName(new QName("from")).getValue();
 
-        logger.info(()-> "The receiver is "+to);
-
-        logger.info(()-> "The initiator is "+from);
         
         if(to != null && from != null){
             DatabaseManagement db = DatabaseManagement.getInstance(CredentialManager.getPassword(), CredentialManager.getDatabaseName(), CredentialManager.getDatabaseUsername());
@@ -64,7 +61,6 @@ public class PresenceTagParser {
                         """);
 
                         writer.flush();
-                        logger.info("Sent here ...");
 
                     }catch(IOException exception){
                         logger.info("Error occurred: "+exception.getMessage());

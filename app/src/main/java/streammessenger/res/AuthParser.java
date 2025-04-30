@@ -1,12 +1,9 @@
 package streammessenger.res;
 
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.net.Socket;
-import java.util.Properties;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 
 import javax.xml.stream.XMLEventReader;
@@ -40,6 +37,7 @@ public class AuthParser {
     }
 
     public static String decodeAndGetContact(String token){
+        //TODO: The secret key should be stored securely
         String contact = null;
         try{
             Jws<Claims> claims = Jwts.parser().verifyWith(Keys.hmacShaKeyFor("ABDULFATTAH-ABDULFATTAH-ABDULFATTAH-ABDULFATTAH-ABDULFATTAH-ABDULFATTAH-ABDULFATTAH-ABDULFATTAH-ABDULFATTAH".getBytes())).build().parseSignedClaims(token);
@@ -110,20 +108,16 @@ public class AuthParser {
                             OutputStream os = socketConnection.getOutputStream();
                             OutputStreamWriter writer = new OutputStreamWriter(os);
 
-                            logger.info("Success");
-
                             writer.write("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl' />");
                             
                             StreamServer.connections.put(contact, socketConnection);
 
                             connectionHandler.setUserContact(contact);
 
-                            logger.info("User is "+contact);
                         }catch(IOException exception){
                             logger.info("Error occurred: "+exception.getMessage());
                         }
                     }else{
-                        logger.info("Error ");
                         try{
                             OutputStream os = socketConnection.getOutputStream();
                             OutputStreamWriter writer = new OutputStreamWriter(os);
@@ -145,37 +139,6 @@ public class AuthParser {
                     }
 
                     break;
-                    
-                    /**try{
-                        OutputStream os = socketConnection.getOutputStream();
-                        OutputStreamWriter writer = new OutputStreamWriter(os);
-                        //If the token is Valid
-                        if(isUserIdValid(contact)) writer.write("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl' />");
-                        if(isUserIdValid(contact)) StreamServer.connections.put(contact, socketConnection);
-                        if(isUserIdValid(contact)) connectionHandler.setUserContact(contact);
-                        //If the token is InValid 
-                        if(!isUserIdValid(contact)) {
-                            logger.info("The user is invalidated");
-                            writer.write("""
-                                    <stream:failure xmlns='urn:ietf:params:xml:ns:xmpp-sasl'>
-                                    <not-authorized>
-                                    Invalid Token\s
-                                    </not-authorized>
-                                    </stream:failure>
-                                    """);
-                            //Send stream closing tag
-                            writer.write("</stream:stream>");
-                            writer.flush();
-                            //Close the socket connection
-                            socketConnection.close();
-                        }
-                        
-                        if(socketConnection.isConnected()) writer.flush();
-                        break; //Break out of the loop when completes
-                    }catch(IOException exception){
-                        logger.info(() -> "Error occurred trying to send message to the user: "+exception.getMessage());
-                    }*/
-
                 }
             }
         }

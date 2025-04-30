@@ -31,8 +31,6 @@ public class MessageTagParser {
         String receiver_contact = messageStartElement.getAttributeByName(new QName("to")).getValue();
         String messageType = messageStartElement.getAttributeByName(new QName("type")).getValue();
         StringBuilder body = new StringBuilder();
-        logger.info("The sender contact is: "+sender_contact);
-        logger.info("The receiver contact is: "+receiver_contact);
         
         if(reader != null){
             while(reader.hasNext()){
@@ -54,7 +52,6 @@ public class MessageTagParser {
                                             "<body>"+ body +"</body>\n" +
                                             "</stream:message>");
                                     receiver_writer.flush();
-                                    logger.info("Message route to the receiver successfully");
                                 } catch (IOException e) {
                                     logger.info("Error occurred sending message to the receiver: "+e.getMessage());
                                 }
@@ -63,7 +60,6 @@ public class MessageTagParser {
                         if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("body")) break;
                     }
                     if(StreamServer.connections.containsKey(receiver_contact)) {
-                        logger.info("The receiver is online, routing the message to the destination");
                         try{
                             Socket receiver_socket = StreamServer.connections.get(receiver_contact);
                             OutputStreamWriter writer = new OutputStreamWriter(receiver_socket.getOutputStream());
@@ -80,10 +76,9 @@ public class MessageTagParser {
                             logger.info("Error occurred sending message to the receiver: "+exception.getMessage());
                         }
                     }else{
-                        logger.info("The receiver is offline, message will be routed to the user when they come online");
                         persistMessageForOfflineUser(receiver_contact, sender_contact, body.toString(), messageType);
                         if(db != null){
-                            logger.info("Caching the message for the receiver");
+                            //TODO: Cache the message for the user pending till reconnection
                         }
                     }
                 }

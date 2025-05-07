@@ -22,6 +22,16 @@ public class DatabaseManagement {
     private final Logger logger = Logger.getLogger("database_logger");
     private static DatabaseManagement instance = null;
 
+    @SuppressWarnings("unused")
+    private static final String USER_ID_COLUMN_NAME = "user_id";
+    @SuppressWarnings("unused")
+    private static final String USER_PHONE_ID_COLUMN_NAME = "phone_id";
+    @SuppressWarnings("unused")
+    private static final String USER_STATUS_COLUMN_NAME = "status";
+    @SuppressWarnings("unused")
+    private static final String USER_STATUS_UPDATE_COLUMN_NAME = "status_update_timestamp";
+
+
     private DatabaseManagement(String password, String username, String db){
         this.username = username;
         this.password = password;
@@ -37,30 +47,18 @@ public class DatabaseManagement {
     }
 
 
+    /**
+     * It returns the instance of the DatabaseManagement class if available or creates new one and return it
+     * @param password The password to the database
+     * @param username The username 
+     * @param db The name of the database
+     * @return DatabaseManagement instance
+     */
     public static DatabaseManagement getInstance(String password, String username, String db){
         if(instance == null){
             instance = new DatabaseManagement(password, username, db);
         }
         return instance;
-    }
-
-    /**
-     * It checks whether the user already exists in the database
-     * @param contactId The string representation of the user contact id
-     * @return Boolean value representing the user status
-     */
-    private boolean isUserExists(@Nonnull String contactId){
-        try {
-            String query = "SELECT contact_id FROM users WHERE contact_id = ?";
-            PreparedStatement preparedStatement = connection.prepareStatement(query);
-            preparedStatement.setString(1, contactId);
-            ResultSet resultSet = preparedStatement.executeQuery();
-            if(resultSet.next()) return true;
-        } catch (Exception e) {
-            logger.info(() -> "Exception occurred: "+e.getMessage());
-        }
-
-        return false;
     }
 
     /**
@@ -130,6 +128,27 @@ public class DatabaseManagement {
      */
 
 
+    /**
+      * It checks whether the user already exists in the database
+      * @param contactId The string representation of the user contact id
+      * @return Boolean value representing the user status
+     */
+    @Deprecated
+    private boolean isUserExists(@Nonnull String contactId){
+        try {
+            String query = "SELECT contact_id FROM users WHERE contact_id = ?";
+            PreparedStatement preparedStatement = connection.prepareStatement(query);
+            preparedStatement.setString(1, contactId);
+            ResultSet resultSet = preparedStatement.executeQuery();
+            if(resultSet.next()) return true;
+        } catch (Exception e) {
+            logger.info(() -> "Exception occurred: "+e.getMessage());
+        }
+
+        return false;
+    }
+
+
      /**
       * Checks if the user exists based on their phone number
       * @param phone_number The phone_number of the user in ES614 format
@@ -175,6 +194,7 @@ public class DatabaseManagement {
      * @param user_id The user id of the user
      * @return boolean state of the authentication status
      */
+    @Deprecated
     public boolean authenticateUserByUID(String user_id){
 
         if(connection != null){
@@ -197,6 +217,7 @@ public class DatabaseManagement {
      * @param phone_number The phone number of the user in ES614 format
      * @return A boolean value representing the state of the user status
      */
+    @Deprecated
     public boolean authenticatedUserByPhoneNumber(String phone_number){
         if(connection != null){
             try {

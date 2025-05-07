@@ -19,6 +19,10 @@ import javax.xml.stream.events.StartElement;
 import javax.xml.stream.events.XMLEvent;
 
 
+/**
+ * The Entry into the custom xmppp protocol implementation
+ * */
+
 public class StreamServer {
     private boolean isHTTPSEnabled = false;
     private final int PORT;
@@ -47,6 +51,14 @@ public class StreamServer {
         }
     }
 
+    /**
+     * Returns the connection instance
+     * @param server The server address
+     * @param port The port to listen to
+     * @param isHTTPSEnabled Either HTTP is enabled or not
+     * @param db The database connection instance
+     * @return An instance of the connection
+     */
     public static StreamServer getInstance(String server, int port, boolean isHTTPSEnabled, DatabaseManagement db){
         if(instance == null){
             instance = new Builder()
@@ -59,12 +71,16 @@ public class StreamServer {
         return instance;
     }
 
+
+    /**
+     * Starts the server connection to listen on the specify address
+     */
     public void start(){
         try(ServerSocket socket = new ServerSocket(PORT)){
             while(true){
-                Socket clientSocketConnection = socket.accept();
+                Socket clientSocketConnection = socket.accept(); //Get's the client socket connection
                 ExecutorService poolJob = Executors.newFixedThreadPool(10);
-                poolJob.execute(new ConnectionHandler(clientSocketConnection));
+                poolJob.execute(new ConnectionHandler(clientSocketConnection)); //Handles the client connection on a separate thread
             }
         }catch(IOException exception){
             logger.info(() -> "Error occurred starting stream server: "+exception.getMessage());
@@ -91,6 +107,8 @@ public class StreamServer {
             this.user_contact = contact;
         }
 
+    
+        
         private String streamHeader(){
             return new String("<?xml version='1.0'?>\n"+
                               "<stream:stream\n"+
@@ -105,7 +123,6 @@ public class StreamServer {
          * @param startElement
          */
         private void processInitialStream(StartElement startElement){
-            logger.info("Initial Stream header starts");
             //Increment the streamRestarterCounter
             streamRestarterCounter++;
 
@@ -126,7 +143,6 @@ public class StreamServer {
                         writer.write(getAuthStreamFeatures());
                     }
                     writer.flush();
-                    logger.info("Namespace is "+streamNamespace);
                 }else{
                     //Close the socket connection 
                     OutputStream os = connection.getOutputStream();
@@ -134,7 +150,7 @@ public class StreamServer {
                     writer.write("<failure> invalid-namespace </failure>");
                     writer.write("</stream:stream>");
                     writer.flush();
-                    connection.close();
+                    connection.close(); //Close the client connection
                 }
             }catch(IOException exception){
                 logger.info(() -> "Error occurred :"+exception.getMessage());
@@ -149,24 +165,31 @@ public class StreamServer {
 
         private void startStreamingXML(InputStream is){
             try {
-                XMLInputFactory factory = XMLInputFactory.newInstance();
-                XMLEventReader xmlEventReader = factory.createXMLEventReader(is);
-                while(xmlEventReader.hasNext()){
-                    XMLEvent event = xmlEventReader.nextEvent();
+                XMLInputFactory factory = XMLInputFactory.newInstance(); //Get's the XMLInputFactory
+                XMLEventReader xmlEventReader = factory.createXMLEventReader(is); //Creates an XMLEventReader
+                while(xmlEventReader.hasNext()){ //Process the stream while the reader has next data
+
+                    XMLEvent event = xmlEventReader.nextEvent(); //Gets the next Event
+
+                    if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("stream")){
+                        try{
+                            connections.get(user_contact).close(); //Get the user socket and close the connection
+                            connections.remove(user_contact); //Remove the user connection from the hashmap
+                            connection.close(); //Close the client connection, Same thin
+                            //TODO: The presence table can now be updated
+                        }catch(IOException exception){
+                            logger.info("Error closing and tearing down the user connection: "+exception.getMessage());
+                        }
+                    }
+
                     if(event.isStartElement()){
                         StartElement startElement = event.asStartElement();
-                        String tagName = startElement.getName().getLocalPart();
+                        String tagName = startElement.getName().getLocalPart(); //Get's the  tag Name of the Event
                         switch (tagName) {
-
                             case "stream":
-                                /**
-                                 * If the connection is initial XML Stream, Then
-                                 * streamRestarterCounter  is equal to 0
-                                 */
                                 if(streamRestarterCounter == 0){
                                     processInitialStream(startElement);
                                 }else{
-
                                     if(isHTTPSEnabled){
                                         //Verify the connections
                                         boolean isSocketSecure = verifyClientConnection();
@@ -228,7 +251,6 @@ public class StreamServer {
                                 break;
 
                             case "presence":
-                                logger.info("processing presence tag....");
                                 PresenceTagParser presenceTagParser = new PresenceTagParser(connection, xmlEventReader, startElement);
                                 presenceTagParser.parse();
                                 break;
@@ -236,19 +258,22 @@ public class StreamServer {
                                 break;
                         }
                     }
-
-                    if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("stream")){
-                        try{
-                            //TODO: Remove the user socket instance from the storage
-                            connections.remove(user_contact);
-                            connection.close(); //Closing the user connection when a </stream> is received
-                        } catch (IOException e) {
-                            logger.info("Error occurred closing the user connection: "+e.getMessage());
-                        }
-                    }
                 }
             } catch (XMLStreamException exception) {
-                logger.info(() ->  "Error: "+exception.getMessage());
+
+                //Test if the user is still connected because this error is also thrown when the connection closes abrubtly
+                if(!connection.isConnected()){
+                    try{
+                        connections.remove(user_contact); //Remove the user socket connection from the connections
+                        connection.close(); //Closes the user socket connection
+                        //TODO: The presence database can now be updated
+                    }catch(IOException e){
+                        logger.info("Error occurred tearing down the user connection on disconnect: "+e.getMessage());
+                    }
+                }else{
+                    //Else  the user really sent a malformed XML tag element
+                    logger.info("The user really sent a malformed xml tag: "+exception.getMessage());
+                }
             }
         }
 

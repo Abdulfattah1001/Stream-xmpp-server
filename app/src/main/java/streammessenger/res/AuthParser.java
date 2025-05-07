@@ -18,10 +18,14 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 
 
+
+///This class is used to authenticate the user
+
 public class AuthParser {
     private final XMLEventReader reader;
     private final StartElement authStartElement;
     private final static Logger logger = Logger.getLogger("authentication");
+    
     private final Socket socketConnection;
     @SuppressWarnings("unused")
     private final DatabaseManagement db;

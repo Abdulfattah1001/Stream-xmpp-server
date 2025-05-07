@@ -54,11 +54,12 @@ public class PresenceTagParser {
                     try{
                         Socket socket = StreamServer.connections.get(from); ///Get the socket connection of the sender
                         OutputStreamWriter writer = new OutputStreamWriter(socket.getOutputStream());
-                        writer.write("""
-                            <presence> 
+                        String form = String.format("""
+                            <presence from='%s'> 
                                 <show> Last seen 9:00PM 2025 </show>
                             </presence>
-                        """);
+                        """, from);
+                        writer.write(form);
 
                         writer.flush();
 

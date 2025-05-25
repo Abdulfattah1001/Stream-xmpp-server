@@ -37,8 +37,11 @@ public class MessageTagParser {
         String sender_contact = messageStartElement.getAttributeByName(new QName("from")).getValue();
         String receiver_contact = messageStartElement.getAttributeByName(new QName("to")).getValue();
         String messageType = messageStartElement.getAttributeByName(new QName("type")).getValue();
+        String timestamp = messageStartElement.getAttributeByName(new QName("timestamp")).getValue();
+        String message_id = messageStartElement.getAttributeByName(new QName("id")).getValue();
+
         StringBuilder body = new StringBuilder();
-        
+
         if(reader != null){
             while(reader.hasNext()){
                 XMLEvent event = reader.nextEvent();
@@ -49,24 +52,29 @@ public class MessageTagParser {
                         if(event.isCharacters()){
                             body.append(event.asCharacters().getData());
                             if(StreamServer.connections.containsKey(receiver_contact)){
-                                
-                                if(StreamServer.connections.get(receiver_contact).isConnected()){
+                                logger.info("Receiver yeah");
+                                Socket sock = StreamServer.connections.get(receiver_contact);
+                                if(sock.isConnected()){
+                                    logger.info("Receiver yeah 1");
                                     try{
-                                        OutputStreamWriter receiver_writer = new OutputStreamWriter(StreamServer.connections.get(receiver_contact).getOutputStream());
-                                        receiver_writer.write("<stream:message\n" +
+                                        String msg = "<stream:message\n" +
                                                 "from='"+sender_contact+"'\n" +
                                                 "to='"+receiver_contact+"'\n" +
-                                                "type='"+"TEXT"+"'>\n" +
+                                                "message_id='"+message_id+"'\n" +
+                                                "timestamp='"+timestamp+"'\n" +
+                                                "type='"+ messageType +"'>\n" +
                                                 "<body>"+ body +"</body>\n" +
-                                                "</stream:message>");
+                                                "</stream:message>\n";
+                                        OutputStreamWriter receiver_writer = new OutputStreamWriter(sock.getOutputStream());
+                                        receiver_writer.write(msg);
                                         receiver_writer.flush();
-                                    } catch (IOException e) {
+                                    } catch (Exception e) {
                                         logger.info("Error occurred sending message to the receiver: "+e.getMessage());
                                     }
                                     try{
                                         logger.info("Sending data to the backend...");
-                                        URL url = new URL("https://stream-server-js.onrender.com/api/message/notify");
-                                        //URL url = new URL("http://192.168.103.136:3003/api/message/notify");
+                                        //URL url = new URL("https://stream-server-js.onrender.com/api/message/notify");
+                                        URL url = new URL("http://192.168.104.136:3003/api/message/notify");
 
                                         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
     
@@ -91,107 +99,20 @@ public class MessageTagParser {
                                         logger.info("Response code is: "+responseCode);
     
                                         connection.disconnect();
-    
+
                                     }catch(IOException | JSONException exception){
-                                        logger.info("eeor"+exception.getMessage());
+                                        logger.info("Error occurred sending data to backend"+exception.getMessage());
                                     }
                                 }else{
                                     //TODO: the user connections is no longer valid
+                                    logger.info("The user is not connected at the moment");
                                 }
                                 
-                            }else{
-                                logger.info("Reached here");
-
-                                //TODO: Sends a notifier to the backend to notify the user of a new message availability
-                                try{
-                                    logger.info("Sending data to the backend...");
-                                    URL url = new URL("http://192.168.103.136:3003/api/message/notify");
-                                    HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-
-                                    connection.setRequestMethod("POST");
-
-                                    connection.setRequestProperty("Content-Type", "application/json");
-                                    connection.setDoOutput(true);
-
-                                    //String payload = String.format("{\"contact_id\":\"%s\", \"message\":\"%s\"}", receiver_contact, body);
-
-                                    JSONObject jsonPayload = new JSONObject();
-                                    jsonPayload.put("receiver_id", receiver_contact);
-                                    jsonPayload.put("message", body);
-                                    jsonPayload.put("sender_contact", sender_contact);
-
-                                    OutputStreamWriter wr = new OutputStreamWriter(connection.getOutputStream());
-                                    wr.write(jsonPayload.toString());
-                                    wr.flush();
-
-                                    int responseCode = connection.getResponseCode();
-
-                                    logger.info("Response code is: "+responseCode);
-
-                                    connection.disconnect();
-
-                                }catch(IOException | JSONException exception){
-                                    logger.info("eeor"+exception.getMessage());
-                                }
-                                //TODO: The user has got disconnected
                             }
                         }
                         if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("body")) break;
                     }
-                    if(StreamServer.connections.containsKey(receiver_contact)) {
-                        
-                        if(StreamServer.connections.get(receiver_contact).isConnected()){
-                            try{
-                                Socket receiver_socket = StreamServer.connections.get(receiver_contact);
-                                OutputStreamWriter writer = new OutputStreamWriter(receiver_socket.getOutputStream());
-    
-                                writer.write("<stream:message\n"+
-                                                "from='" + sender_contact + "'\n"+
-                                                "to='" + receiver_contact + "'\n"+
-                                                "type='" + messageType + "'>\n"
-                                                   +"<body>" + body + "</body>\n"
-                                            +"</stream:message>");
-    
-                                writer.flush();
-                            }catch(IOException exception){
-                                logger.info("Error occurred sending message to the receiver: "+exception.getMessage());
-                            }
-                        }else{
-                            //TODO: Sends a notifier to the backend to notify the user of a new message availability
-                            try{
-                                logger.info("Sending data to the backend...");
-                                URL url = new URL("http://192.168.103.136/3003/message/notify");
-                                HttpURLConnection connection = (HttpURLConnection) url.openConnection();
 
-                                connection.setRequestMethod("POST");
-
-                                connection.setRequestProperty("Content-Type", "application/json");
-                                connection.setDoInput(true);
-
-                                String payload = String.format("{\"contact_id\":\"%s\", \"message\":\"%s\"}", receiver_contact, body);
-
-                                OutputStreamWriter wr = new OutputStreamWriter(connection.getOutputStream());
-                                wr.write(payload);
-                                wr.flush();
-
-                                int responseCode = connection.getResponseCode();
-
-                                logger.info("Response code is: "+responseCode);
-
-                                connection.disconnect();
-                                
-                            }catch(IOException exception){
-
-                            }
-                            //TODO: The user has got disconnected
-                        }
-                        
-                    }else{
-                        persistMessageForOfflineUser(receiver_contact, sender_contact, body.toString(), messageType);
-                        if(db != null){
-                            //TODO: Cache the message for the user pending till reconnection
-                        }
-                    }
                 }
 
                 if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("message")) break;

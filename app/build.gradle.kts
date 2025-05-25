@@ -13,19 +13,22 @@ plugins {
 repositories {
     // Use Maven Central for resolving dependencies.
     mavenCentral()
+    google()
 }
 
 dependencies {
     // Use JUnit Jupiter for testing.
     testImplementation(libs.junit.jupiter)
-
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
     // This dependency is used by the application
+
     implementation(libs.guava)
     implementation("stax:stax-api:1.0.1")
     implementation("com.mysql:mysql-connector-j:9.1.0")
     implementation("org.json:json:20250107")
+
+    implementation("com.google.firebase:firebase-admin:9.4.0")
 
     implementation("io.jsonwebtoken:jjwt-api:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")

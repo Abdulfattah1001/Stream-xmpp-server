@@ -12,6 +12,7 @@ import streammessenger.res.StreamServer;
 
 public class App {
     private final static Logger logger = Logger.getLogger("database");
+    Firebase
 
     public static void main(String[] args) {
         DatabaseManagement db = null;

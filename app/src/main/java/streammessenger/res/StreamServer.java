@@ -176,7 +176,6 @@ public class StreamServer {
                             connections.get(user_contact).close(); //Get the user socket and close the connection
                             connections.remove(user_contact); //Remove the user connection from the hashmap
                             connection.close(); //Close the client connection, Same thin
-                            //TODO: The presence table can now be updated
                         }catch(IOException exception){
                             logger.info("Error closing and tearing down the user connection: "+exception.getMessage());
                         }

@@ -1,5 +1,7 @@
 package streammessenger.res;
 
+import com.google.firebase.FirebaseOptions;
+
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
@@ -83,6 +85,8 @@ public class AuthParser {
             while(reader.hasNext()){ //While repetition needs to be removed
                 XMLEvent event  = reader.nextEvent();
                 if(authStartElement.isStartElement()){
+
+                    //TODO: Authententicating the user should be delegated to Firebase API [Firebase Authentication]
                     
                     @SuppressWarnings("unused")
                     String tagName = authStartElement.getName().getLocalPart();
@@ -96,8 +100,12 @@ public class AuthParser {
                         
                     }*/
 
+                    //String contact = event.asCharacters().getData();
+                    String contact = "+2349063109106";
+                    boolean isTokenValid = true;
+
                     //Get the token body that was sent to the server
-                    String tokenBody = event.asCharacters().getData();  //The encoded userId string
+                    /**String tokenBody = event.asCharacters().getData();  //The encoded userId string
                     //String decodedTokenBody = new String(Base64.getDecoder().decode(tokenBody)); //The decoded userId string
                     TokenBasedValidation tokenBasedValidation = new TokenBasedValidation(tokenBody);
 
@@ -142,9 +150,51 @@ public class AuthParser {
                         }catch(IOException exception){}
                     }
 
+                    break;*/
+
+                    if(isTokenValid){
+                        logger.info("The user contact is  "+contact);
+                        try{
+                            OutputStream os = socketConnection.getOutputStream();
+                            OutputStreamWriter writer = new OutputStreamWriter(os);
+
+                            writer.write("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl' />");
+                            
+                            StreamServer.connections.put(contact, socketConnection);
+
+                            connectionHandler.setUserContact(contact);
+
+                        }catch(IOException exception){
+                            logger.info("Error occurred: "+exception.getMessage());
+                        }
+                    }else{
+                        try{
+                            OutputStream os = socketConnection.getOutputStream();
+                            OutputStreamWriter writer = new OutputStreamWriter(os);
+
+                            writer.write("""
+                                <stream:failure xmlns='urn:ietf:params:xml:ns:xmpp-sasl'>
+                                    <not-authorized> Invalid Token </not-authorized>
+                                </stream:failure>
+                                """);
+
+                            writer.write("""
+                                </stream:stream>
+                            """);
+
+                            writer.flush();
+
+                            socketConnection.close();
+                        }catch(IOException exception){}
+                    }
+
                     break;
                 }
             }
         }
+    }
+
+    private void auth(){
+
     }
 }

@@ -38,7 +38,7 @@ public class PresenceTagParser {
             //Checking the subscription status of the sender to the receiver
             if(status == SubscriptionStatus.BOTH || status == SubscriptionStatus.TO){
                 if(StreamServer.connections.containsKey(to)){ //If the user is online
-                    Socket socket = StreamServer.connections.get(to); //Getting the connections
+                    Socket socket = StreamServer.connections.get(from); //Getting the connections
                     if(socket.isConnected()){ //If the connection is still available, then the user is online
                         try{
                             OutputStreamWriter writer = new OutputStreamWriter(socket.getOutputStream());

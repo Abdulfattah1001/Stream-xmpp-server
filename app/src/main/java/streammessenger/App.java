@@ -8,17 +8,24 @@ import java.util.logging.Logger;
 import streammessenger.res.CredentialManager;
 import streammessenger.res.CustomHttpServer;
 import streammessenger.res.DatabaseManagement;
+import streammessenger.res.FirebaseSetup;
 import streammessenger.res.StreamServer;
 
 public class App {
     private final static Logger logger = Logger.getLogger("database");
-    Firebase
 
     public static void main(String[] args) {
+
         DatabaseManagement db = null;
         Properties properties = new Properties();
         String dbpassword = null;
         String dbname = null;
+
+        try{
+            FirebaseSetup.setUp();
+        } catch (IOException e) {
+            logger.info("Error from Firebase set up: "+e.getMessage());
+        }
         
         try{
             FileInputStream fileInputStream = new FileInputStream("config.properties");

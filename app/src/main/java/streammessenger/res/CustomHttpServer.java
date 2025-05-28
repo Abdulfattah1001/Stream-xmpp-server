@@ -36,7 +36,7 @@ public class CustomHttpServer {
         HttpServer server = HttpServer.create(new InetSocketAddress(PORT), 0);
         server.createContext("/api/create-account", new HttpHandler(){
             /**
-             * Send back a json represents if the account creation is successfull {"status": 200, "message": "Account creation sucessfull"},
+             * Send back a json represents if the account creation is successfull {"status": 200, "message": "Account creation successful"},
              * Prevent multiple account creation
              */
             @SuppressWarnings("null")

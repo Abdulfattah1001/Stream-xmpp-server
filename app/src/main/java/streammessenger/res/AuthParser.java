@@ -1,11 +1,19 @@
 package streammessenger.res;
 
-import com.google.firebase.FirebaseOptions;
+import com.google.api.core.ApiFuture;
+import com.google.common.util.concurrent.FutureCallback;
+import com.google.common.util.concurrent.Futures;
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseToken;
+
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.net.Socket;
+import java.util.Base64;
+import java.util.concurrent.ExecutionException;
 import java.util.logging.Logger;
 
 import javax.xml.stream.XMLEventReader;
@@ -24,6 +32,7 @@ import io.jsonwebtoken.security.Keys;
 ///This class is used to authenticate the user
 
 public class AuthParser {
+    private static final org.slf4j.Logger log = LoggerFactory.getLogger(AuthParser.class);
     private final XMLEventReader reader;
     private final StartElement authStartElement;
     private final static Logger logger = Logger.getLogger("authentication");
@@ -76,17 +85,12 @@ public class AuthParser {
      * XML Parse occurs
      */
     public void parseAuthXMLStream() throws XMLStreamException {
-        /**Properties properties = new Properties();
-        try{
-            FileInputStream fileInputStream = new FileInputStream("config.properties");
-            properties.load(fileInputStream);
-        }catch(IOException exception){}*/
         if(reader != null){
             while(reader.hasNext()){ //While repetition needs to be removed
                 XMLEvent event  = reader.nextEvent();
                 if(authStartElement.isStartElement()){
 
-                    //TODO: Authententicating the user should be delegated to Firebase API [Firebase Authentication]
+                    //TODO: Authenticating the user should be delegated to Firebase API [Firebase Authentication]
                     
                     @SuppressWarnings("unused")
                     String tagName = authStartElement.getName().getLocalPart();
@@ -95,14 +99,19 @@ public class AuthParser {
 
                     if(event.isCharacters() && event.asCharacters().isWhiteSpace()) event = reader.nextEvent();
 
-                    /**if(properties.getProperty("authMechanism").equals("TOKEN")){
-                        logger.info("Token base authentication mechanism enabled");
-                        
-                    }*/
-
-                    //String contact = event.asCharacters().getData();
+                    String contact1 = event.asCharacters().getData();
+                    contact1 = new String(Base64.getDecoder().decode(contact1));
                     String contact = "+2349063109106";
                     boolean isTokenValid = true;
+
+                    try {
+                        FirebaseToken token = FirebaseAuth.getInstance().verifyIdTokenAsync(contact1).get();
+                        logger.info("User ID is: "+token.getUid());
+                    } catch (InterruptedException e) {
+                        logger.info("Error occurred :"+e.getMessage());
+                    } catch (ExecutionException e) {
+                        logger.info("Error occurred  2:"+e.getMessage());
+                    }
 
                     //Get the token body that was sent to the server
                     /**String tokenBody = event.asCharacters().getData();  //The encoded userId string
@@ -192,9 +201,5 @@ public class AuthParser {
                 }
             }
         }
-    }
-
-    private void auth(){
-
     }
 }

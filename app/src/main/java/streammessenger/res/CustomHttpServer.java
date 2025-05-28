@@ -60,22 +60,16 @@ public class CustomHttpServer {
                 try{
                     JSONObject jsonObject = new JSONObject(builder.toString());
                     
-                    String contact = jsonObject.getString("phone_number");
-                    String user_id = jsonObject.getString("user_id");
-                    String contactId = contact; //The contact id stream@09063109106
+                    String contact = jsonObject.getString("contactId"); //The phone number of the user in E164 Format
+                    String user_id = jsonObject.getString("uid"); //The unique user ID of the user as generated on the Platform Backend Server
+                    String contactId = "stream@" + contact; //Example is stream@+2349063109106
 
-                    //String nickname = null;
-                    String bio = null;
-                    try{
-                        //nickname = jsonObject.getString("display_name");
-                        bio = jsonObject.getString("status");
-                    }catch(JSONException ignore){}
                     if(management != null){
                         
                         try {
-                            management.newUser(contactId, bio, user_id);
+                            management.newUser(contactId,  user_id);
 
-                            String response = "{\"status\": true, \"phone_number\": " + contact + ", \"user_id\": "+ user_id +"}";
+                            String response = "{\"status\": success, \"message\": Account created successfully, \"data\": "+ user_id +"}";
 
                             exchange.sendResponseHeaders(200, response.getBytes().length);
                             writer.write(response);
@@ -86,7 +80,7 @@ public class CustomHttpServer {
                         }
                     }
                 }catch(JSONException exception){
-                    logger.info(() -> "Error occured: JSON"+exception.getMessage());
+                    logger.info(() -> "Error occurred: JSON"+exception.getMessage());
                 }
                 logger.info(() -> "The request body is: "+builder.toString());
             }

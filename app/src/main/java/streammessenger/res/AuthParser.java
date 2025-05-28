@@ -51,6 +51,8 @@ public class AuthParser {
         this.connectionHandler = connectionHandler;
     }
 
+
+    @Deprecated
     public static String decodeAndGetContact(String token){
         //TODO: The secret key should be stored securely
         String contact = null;

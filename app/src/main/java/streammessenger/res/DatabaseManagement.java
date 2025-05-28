@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import javax.annotation.Nonnull;
@@ -103,22 +104,35 @@ public class DatabaseManagement {
 
     /**
      * Creates a new user with column {phone_number, user_id, status}
-     * @param contactid The phone_number of the user
-     * @param status The status of the user 
+     * @param contactId The phone_number of the user
      * @param userId The unique user identity of the user
      * @throws SQLException
      */
-    public void newUser(String contactid, @Nullable String status, @Nonnull String userId) throws SQLException {
-        if(isUserExists(contactid)) return; //If the user exists already on the database
+    public void newUser(String contactId, @Nonnull String userId) throws SQLException {
+        if(isUserExists(contactId)) return; //If the user exists already on the database
 
         if(connection != null){
             String updateString = "INSERT INTO users (user_id, contact_id) VALUES(?,?)";
             PreparedStatement preparedStatement = connection.prepareStatement(updateString);
             preparedStatement.setString(1, userId);
-            preparedStatement.setString(2, contactid);
-            //preparedStatement.setString(3, status);
+            preparedStatement.setString(2, contactId);
             @SuppressWarnings("unused")
             int result = preparedStatement.executeUpdate();
+        }
+    }
+
+    public void createUserAccount(String uid, String jid){
+        if(this.isUserAccountExists(jid)) return;
+
+        try{
+            String query = "INSERT INTO user (uid, contactId) VALUES (?,?)";
+            PreparedStatement insertStatement = connection.prepareStatement(query);
+            insertStatement.setString(1, uid);
+            insertStatement.setString(2, jid);
+
+            ResultSet resultSet = insertStatement.executeQuery();
+        }catch(SQLException exception){
+            logger.log(Level.WARNING,"Error occurred",exception);
         }
     }
 
@@ -145,6 +159,10 @@ public class DatabaseManagement {
             logger.info(() -> "Exception occurred: "+e.getMessage());
         }
 
+        return false;
+    }
+
+    private boolean isUserAccountExists(String jid){
         return false;
     }
 

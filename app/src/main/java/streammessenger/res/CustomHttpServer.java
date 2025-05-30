@@ -62,12 +62,12 @@ public class CustomHttpServer {
                     
                     String contact = jsonObject.getString("contactId"); //The phone number of the user in E164 Format
                     String user_id = jsonObject.getString("uid"); //The unique user ID of the user as generated on the Platform Backend Server
-                    String contactId = "stream@" + contact; //Example is stream@+2349063109106
+                    String contactId = "stream@" + contact; //Example is stream@2349063109106
 
                     if(management != null){
                         
                         try {
-                            management.newUser(contactId,  user_id);
+                            management.newUser(contact,  user_id);
 
                             String response = "{\"status\": success, \"message\": Account created successfully, \"data\": "+ user_id +"}";
 

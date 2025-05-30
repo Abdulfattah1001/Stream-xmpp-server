@@ -16,8 +16,10 @@ import javax.xml.stream.events.XMLEvent;
 
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.slf4j.LoggerFactory;
 
 public class MessageTagParser {
+    private static final org.slf4j.Logger log = LoggerFactory.getLogger(MessageTagParser.class);
     @SuppressWarnings("unused")
     private final Socket socket;
     private final StartElement messageStartElement;
@@ -33,6 +35,7 @@ public class MessageTagParser {
     }
 
     public void parseMessageTag() throws XMLStreamException {
+        logger.info("Processing message....");
 
         String sender_contact = messageStartElement.getAttributeByName(new QName("from")).getValue();
         String receiver_contact = messageStartElement.getAttributeByName(new QName("to")).getValue();

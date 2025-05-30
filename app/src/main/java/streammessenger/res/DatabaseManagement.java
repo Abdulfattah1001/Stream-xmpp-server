@@ -303,6 +303,20 @@ public class DatabaseManagement {
         return offline_messages;
     }
 
+    public boolean checkOfflineMessages(String uid){
+        try{
+            String queryString = "SELECT * FROM offline_messages WHERE receiver_id = ? LIMIT 1";
+            PreparedStatement statement = connection.prepareStatement(queryString);
+            statement.setString(1, uid);
+
+            ResultSet resultSet = statement.executeQuery();
+            if(resultSet.next()) return true;
+        } catch (SQLException e) {
+            logger.info("Error occurred checking offline message "+e.getMessage());
+        }
+        return false;
+    }
+
 
     /**
      * Retrieves the user rosters list 

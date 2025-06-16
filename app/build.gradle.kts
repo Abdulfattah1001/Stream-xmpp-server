@@ -30,10 +30,12 @@ dependencies {
 
     implementation("com.google.firebase:firebase-admin:9.4.0")
 
+    implementation("com.google.protobuf:protobuf-java:4.31.1")
     implementation("io.jsonwebtoken:jjwt-api:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
 }
+
 
 // Apply a specific Java toolchain to ease working on different environments.
 java {

@@ -1,10 +1,19 @@
 package streammessenger.res;
 
+import com.google.cloud.firestore.DocumentSnapshot;
+import com.google.cloud.firestore.Firestore;
+import com.google.firebase.cloud.FirestoreClient;
+import com.google.firebase.messaging.FirebaseMessaging;
+import com.google.firebase.messaging.FirebaseMessagingException;
+import com.google.firebase.messaging.Message;
+import com.google.firebase.messaging.Notification;
+
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.net.HttpURLConnection;
 import java.net.Socket;
 import java.net.URL;
+import java.util.concurrent.ExecutionException;
 import java.util.logging.Logger;
 
 import javax.net.ssl.HttpsURLConnection;
@@ -35,8 +44,7 @@ public class MessageTagParser {
     }
 
     public void parseMessageTag() throws XMLStreamException {
-        logger.info("Processing message....");
-
+        logger.info("Message processing ...");
         String sender_contact = messageStartElement.getAttributeByName(new QName("from")).getValue();
         String receiver_contact = messageStartElement.getAttributeByName(new QName("to")).getValue();
         String messageType = messageStartElement.getAttributeByName(new QName("type")).getValue();
@@ -54,11 +62,12 @@ public class MessageTagParser {
                         if(event.isCharacters() && event.asCharacters().isWhiteSpace()) event = reader.nextEvent();
                         if(event.isCharacters()){
                             body.append(event.asCharacters().getData());
+                            ///Sending a notification to the receiver
+                            send_notification(sender_contact, receiver_contact, body.toString());
+
                             if(StreamServer.connections.containsKey(receiver_contact)){
-                                logger.info("Receiver yeah");
                                 Socket sock = StreamServer.connections.get(receiver_contact);
                                 if(sock.isConnected()){
-                                    logger.info("Receiver yeah 1");
                                     try{
                                         String msg = "<stream:message\n" +
                                                 "from='"+sender_contact+"'\n" +
@@ -74,7 +83,7 @@ public class MessageTagParser {
                                     } catch (Exception e) {
                                         logger.info("Error occurred sending message to the receiver: "+e.getMessage());
                                     }
-                                    try{
+                                    /**try{
                                         logger.info("Sending data to the backend...");
                                         //URL url = new URL("https://stream-server-js.onrender.com/api/message/notify");
                                         URL url = new URL("http://192.168.104.136:3003/api/message/notify");
@@ -105,7 +114,7 @@ public class MessageTagParser {
 
                                     }catch(IOException | JSONException exception){
                                         logger.info("Error occurred sending data to backend"+exception.getMessage());
-                                    }
+                                    }*/
                                 }else{
                                     //TODO: the user connections is no longer valid
                                     logger.info("The user is not connected at the moment");
@@ -136,5 +145,26 @@ public class MessageTagParser {
      * @param sender_id
      * @param message_content
      */
-    private void send_notification(String receiver_id, String sender_id, String message_content){}
+    private void send_notification(String receiver_id, String sender_id, String message_content){
+        Firestore db = FirestoreClient.getFirestore();
+        try {
+            DocumentSnapshot documentSnapshot = db.collection("users").document(receiver_id).get().get();
+            if(documentSnapshot.exists()){
+                String token = (String) documentSnapshot.get("fcm_token");
+                logger.info("The receiver token is: "+token);
+                Message message = Message.builder()
+                        .setToken(token)
+                        .setNotification(Notification.builder()
+                                .setTitle(sender_id)
+                                .setBody(message_content)
+                                .build())
+                        .build();
+                FirebaseMessaging.getInstance().send(message);
+            }
+        } catch (InterruptedException | ExecutionException e) {
+            logger.info("Error FCM: "+e.getMessage());
+        } catch (FirebaseMessagingException e) {
+            logger.info("Error occurred sending FCM :"+e.getMessage());
+        }
+    }
 }

@@ -103,12 +103,45 @@ public class AuthParser {
 
                     String contact1 = event.asCharacters().getData();
                     contact1 = new String(Base64.getDecoder().decode(contact1));
-                    String contact = "+2349063109106";
-                    boolean isTokenValid = true;
 
                     try {
                         FirebaseToken token = FirebaseAuth.getInstance().verifyIdTokenAsync(contact1).get();
-                        logger.info("User ID is: "+token.getUid());
+                        if(token.getUid() != null){
+                            logger.info("The current user token is: "+token.getUid());
+                            String contact = db.getContactById(token.getUid());
+                            try{
+                                OutputStream os = socketConnection.getOutputStream();
+                                OutputStreamWriter writer = new OutputStreamWriter(os);
+
+                                writer.write("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl' />");
+
+                                StreamServer.connections.put(contact, socketConnection);
+
+                                connectionHandler.setUserContact(contact);
+
+                            }catch(IOException exception){
+                                logger.info("Error occurred: "+exception.getMessage());
+                            }
+                        }else{
+                            try{
+                                OutputStream os = socketConnection.getOutputStream();
+                                OutputStreamWriter writer = new OutputStreamWriter(os);
+
+                                writer.write("""
+                                <stream:failure xmlns='urn:ietf:params:xml:ns:xmpp-sasl'>
+                                    <not-authorized> Invalid Token </not-authorized>
+                                </stream:failure>
+                                """);
+
+                                writer.write("""
+                                </stream:stream>
+                            """);
+
+                                writer.flush();
+
+                                socketConnection.close();
+                            }catch(IOException exception){}
+                        }
                     } catch (InterruptedException e) {
                         logger.info("Error occurred :"+e.getMessage());
                     } catch (ExecutionException e) {
@@ -163,41 +196,6 @@ public class AuthParser {
 
                     break;*/
 
-                    if(isTokenValid){
-                        logger.info("The user contact is  "+contact);
-                        try{
-                            OutputStream os = socketConnection.getOutputStream();
-                            OutputStreamWriter writer = new OutputStreamWriter(os);
-
-                            writer.write("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl' />");
-                            
-                            StreamServer.connections.put(contact, socketConnection);
-
-                            connectionHandler.setUserContact(contact);
-
-                        }catch(IOException exception){
-                            logger.info("Error occurred: "+exception.getMessage());
-                        }
-                    }else{
-                        try{
-                            OutputStream os = socketConnection.getOutputStream();
-                            OutputStreamWriter writer = new OutputStreamWriter(os);
-
-                            writer.write("""
-                                <stream:failure xmlns='urn:ietf:params:xml:ns:xmpp-sasl'>
-                                    <not-authorized> Invalid Token </not-authorized>
-                                </stream:failure>
-                                """);
-
-                            writer.write("""
-                                </stream:stream>
-                            """);
-
-                            writer.flush();
-
-                            socketConnection.close();
-                        }catch(IOException exception){}
-                    }
 
                     break;
                 }

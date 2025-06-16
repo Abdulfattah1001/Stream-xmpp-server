@@ -303,6 +303,20 @@ public class DatabaseManagement {
         return offline_messages;
     }
 
+    public String getContactById(String id){
+        try{
+            String statement = "SELECT contact_id FROM users WHERE user_id = ?";
+            PreparedStatement preparedStatement = connection.prepareStatement(statement);
+            preparedStatement.setString(1, id);
+            ResultSet resultSet = preparedStatement.executeQuery();
+            resultSet.next();
+            return resultSet.getString("contact_id");
+        } catch (SQLException e) {
+            logger.info("Error occurred getting user contct :"+e.getMessage());
+        }
+        return null;
+    }
+
     public boolean checkOfflineMessages(String uid){
         try{
             String queryString = "SELECT * FROM offline_messages WHERE receiver_id = ? LIMIT 1";

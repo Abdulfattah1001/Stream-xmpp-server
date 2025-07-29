@@ -5,3 +5,4 @@
 build
 
 /app/credentials.json
+/app/config.properties

@@ -13,7 +13,6 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
 
 public class DatabaseManagement {
     private final String username;
@@ -112,7 +111,7 @@ public class DatabaseManagement {
         if(isUserExists(contactId)) return; //If the user exists already on the database
 
         if(connection != null){
-            String updateString = "INSERT INTO users (user_id, contact_id) VALUES(?,?)";
+            String updateString = "INSERT INTO users (id, contact_id) VALUES(?,?)";
             PreparedStatement preparedStatement = connection.prepareStatement(updateString);
             preparedStatement.setString(1, userId);
             preparedStatement.setString(2, contactId);
@@ -125,7 +124,7 @@ public class DatabaseManagement {
         if(this.isUserAccountExists(jid)) return;
 
         try{
-            String query = "INSERT INTO user (uid, contactId) VALUES (?,?)";
+            String query = "INSERT INTO user (id, contactId) VALUES (?,?)";
             PreparedStatement insertStatement = connection.prepareStatement(query);
             insertStatement.setString(1, uid);
             insertStatement.setString(2, jid);
@@ -135,7 +134,6 @@ public class DatabaseManagement {
             logger.log(Level.WARNING,"Error occurred",exception);
         }
     }
-
 
     /*
      * -----------THE AUTHENTICATE MECHANISM STARTS HERE----------------------
@@ -150,7 +148,7 @@ public class DatabaseManagement {
     @Deprecated
     private boolean isUserExists(@Nonnull String contactId){
         try {
-            String query = "SELECT contact_id FROM users WHERE contact_id = ?";
+            String query = "SELECT contactId FROM users WHERE contactId = ?";
             PreparedStatement preparedStatement = connection.prepareStatement(query);
             preparedStatement.setString(1, contactId);
             ResultSet resultSet = preparedStatement.executeQuery();
@@ -176,7 +174,7 @@ public class DatabaseManagement {
 
         if(connection != null){
             try{
-                String query = "SELECT * FROM users WHERE contact_id = ? LIMIT 1";
+                String query = "SELECT * FROM users WHERE contactId = ? LIMIT 1";
                 PreparedStatement preparedStatement = connection.prepareStatement(query);
                 ResultSet result = preparedStatement.executeQuery();
                 if(result.next()) return true;
@@ -194,7 +192,7 @@ public class DatabaseManagement {
 
         if(connection != null){
             try {
-                String query = "SELECT * FROM users WHERE user_id = ? LIMIT 1";
+                String query = "SELECT * FROM users WHERE id = ? LIMIT 1";
                 PreparedStatement preparedStatement = connection.prepareStatement(query);
                 preparedStatement.setString(1, user_id);
                 ResultSet result = preparedStatement.executeQuery();
@@ -217,7 +215,7 @@ public class DatabaseManagement {
 
         if(connection != null){
             try{
-                String query = "SELECT * FROM users WHERE user_id = ? LIMIT 1";
+                String query = "SELECT * FROM users WHERE id = ? LIMIT 1";
                 PreparedStatement preparedStatement = connection.prepareStatement(query);
                 preparedStatement.setString(1, user_id);
                 ResultSet result = preparedStatement.executeQuery();
@@ -239,7 +237,7 @@ public class DatabaseManagement {
     public boolean authenticatedUserByPhoneNumber(String phone_number){
         if(connection != null){
             try {
-                String query = "SELECT * FROM users WHERE contact_id == ?";
+                String query = "SELECT * FROM users WHERE contactId == ?";
                 PreparedStatement preparedStatement = connection.prepareStatement(query);
                 preparedStatement.setString(1, phone_number);
                 ResultSet resultSet  = preparedStatement.executeQuery();
@@ -258,7 +256,7 @@ public class DatabaseManagement {
     */
     public void offline_message(String sender_contact, String receiver_contact, String message_content){
         if(connection != null){
-            String query = "INSERT INTO offline_messages(sender_contact, receiver_contact, message_content) VALUES(?,?,?)";
+            String query = "INSERT INTO messages(sender_contact, receiver_contact, message_content) VALUES(?,?,?)";
             try{
                 PreparedStatement preparedStatement = connection.prepareStatement(query);
                 preparedStatement.setString(1, sender_contact);

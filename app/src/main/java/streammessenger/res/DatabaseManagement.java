@@ -72,7 +72,7 @@ public class DatabaseManagement {
     @Deprecated
     public boolean authenticateUserID(@Nonnull String contactId, @Nonnull String password){
         try{
-            String query = "SELECT * FROM users WHERE contact_id = ? LIMIT 1";
+            String query = "SELECT * FROM users WHERE contactId = ? LIMIT 1";
             PreparedStatement preparedStatement = connection.prepareStatement(query);
             preparedStatement.setString(1, contactId);
             ResultSet resultSet = preparedStatement.executeQuery();
@@ -111,7 +111,7 @@ public class DatabaseManagement {
         if(isUserExists(contactId)) return; //If the user exists already on the database
 
         if(connection != null){
-            String updateString = "INSERT INTO users (id, contact_id) VALUES(?,?)";
+            String updateString = "INSERT INTO users (id, contactId) VALUES(?,?)";
             PreparedStatement preparedStatement = connection.prepareStatement(updateString);
             preparedStatement.setString(1, userId);
             preparedStatement.setString(2, contactId);
@@ -303,12 +303,12 @@ public class DatabaseManagement {
 
     public String getContactById(String id){
         try{
-            String statement = "SELECT contact_id FROM users WHERE user_id = ?";
+            String statement = "SELECT contactId FROM users WHERE id = ?";
             PreparedStatement preparedStatement = connection.prepareStatement(statement);
             preparedStatement.setString(1, id);
             ResultSet resultSet = preparedStatement.executeQuery();
             resultSet.next();
-            return resultSet.getString("contact_id");
+            return resultSet.getString("contactId");
         } catch (SQLException e) {
             logger.info("Error occurred getting user contct :"+e.getMessage());
         }
@@ -338,7 +338,7 @@ public class DatabaseManagement {
     public List<HashMap<String, Object>> getRosters(@Nonnull String jid){
         ArrayList<HashMap<String, Object>> users = new ArrayList<>();
         try{
-            String query = "SELECT * FROM rosters WHERE user_id = ?";
+            String query = "SELECT * FROM rosters WHERE id = ?";
             PreparedStatement preparedStatement = connection.prepareStatement(query);
             preparedStatement.setString(1, jid);
             ResultSet resultSet = preparedStatement.executeQuery();

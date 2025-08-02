@@ -47,6 +47,7 @@ public class MessageTagParser {
     public void parseMessageTag() throws XMLStreamException {
         logger.info("Message processing ...");
         String sender_contact = messageStartElement.getAttributeByName(new QName("from")).getValue();
+        logger.info("The sender is..."+sender_contact);
         String receiver_contact = messageStartElement.getAttributeByName(new QName("to")).getValue();
         String messageType = messageStartElement.getAttributeByName(new QName("type")).getValue();
         String timestamp = messageStartElement.getAttributeByName(new QName("timestamp")).getValue();

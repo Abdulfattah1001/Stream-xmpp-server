@@ -86,9 +86,19 @@ The system uses a MySQL database to manage users and messaging metadata.
 
 ```sql
 CREATE TABLE users (
-  id VARCHAR(50) PRIMARY KEY,
-  contactId VARCHAR(50) UNIQUE NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    uid VARCHAR(50) NOT NULL PRIMARY KEY,
+    contactId VARCHAR(50) NOT NULL UNIQUE,
+    displayName VARCHAR(255) NULL,
+    email VARCHAR(100) DEFAULT NULL,
+    avatarUrl VARCHAR(512) DEFAULT NULL,
+    isAnonymous BOOLEAN DEFAULT FALSE,
+    identityKey TEXT,
+    deviceId VARCHAR(100) DEFAULT NULL,
+    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TIMESTAMP  DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX uidIdx(uid),
+    INDEX contactIdx(contactId),
+    INDEX emailIdx(email)
 );
 ```
 
@@ -101,6 +111,40 @@ CREATE TABLE messages (
   body TEXT,
   timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+```
+
+### Offline messages
+```sql
+CREATE TABLE offline_messages (
+    messageId VARCHAR(255) PRIMARY KEY NOT NULL,
+    receipientId VARCHAR(255) NOT NULL,
+    senderId VARCHAR(255) NOT NULL,
+    messageType ENUM('CHAT', 'MEDIA' 'CALL') DEFAULT 'CHAT',
+    encryptedPayload TEXT NULL,
+    mediaUrl VARCHAR(512) DEFAULT NULL,
+    timestamp VARCHAR(50) NOT NULL,
+    expiresAt TIMESTAMP DEFAULT NULL,
+    delivered BOOLEAN DEFAULT FALSE,
+    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX recipientIdx(recipientId), 
+    INDEX deliveredIdx(delivered)
+    );
+
+```
+
+### rosters tables
+```sql
+CREATE TABLE rosters (
+    uid VARCHAR(50) NOT NULL PRIMARY KEY,
+    contactId VARCHAR(50) NOT NULL,
+    subscription ENUM('NONE', 'FROM', 'TO', 'BOTH') DEFAULT 'NONE', 
+    ask ENUM('SUBSCRIBE', 'UNSUBSCRIBE') DEFAULT NULL,
+    displayName VARCHAR(255) DEFAULT NULL,
+    blocked BOOLEAN DEFAULT FALSE,
+    muted BOOLEAN DEFAULT FALSE,
+    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, 
+    UNIQUE KEY KEY uniqueContact (uid, contactId), INDEX uidIdx (uid), INDEX contactIdIdx (contactId));
 ```
 Full schema definitions are located in the /sql directory.
 

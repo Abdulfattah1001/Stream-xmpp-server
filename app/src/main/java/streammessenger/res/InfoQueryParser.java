@@ -29,9 +29,11 @@ public class InfoQueryParser {
         if(iqStartElement != null){
             String iqType = iqStartElement.getAttributeByName(new QName("type")).getValue(); //The type of InfoQuery Tag
             String userJID = iqStartElement.getAttributeByName(new QName("from")).getValue(); //The userId of the current user
-            if(StreamServer.connections.containsKey(userJID)) logger.info("Wow");
+            logger.info("The user to updates it roster is:  " + userJID);
+            logger.info("The type of roster set is  " + iqType);
 
             if(iqType.equals("set")){
+                logger.info("Setting a user roster...");
 
                 while(reader.hasNext()){
                     XMLEvent event = reader.nextEvent();
@@ -39,7 +41,7 @@ public class InfoQueryParser {
                         StartElement startElement = event.asStartElement();
                         String tagName = startElement.getName().getLocalPart();
                         if(tagName.equals("query")){
-
+                            logger.info("Encounter Query...");
                             while(reader.hasNext()){
 
                                 XMLEvent event2 = reader.nextEvent();
@@ -49,9 +51,8 @@ public class InfoQueryParser {
                                     
                                     StartElement itemStartElement = event2.asStartElement();
                                     String contactId = itemStartElement.getAttributeByName(new QName("jid")).getValue(); //The contactId of the user to add to the roster
-                                    String nickname = itemStartElement.getAttributeByName(new QName("nickname")).getValue(); //The Nickname of the user to add, it might benull
-                                    logger.info("The user name is:"+nickname+"--- and contact is: "+contactId);
-                                    databaseManagement.updateRoster(userJID, contactId, nickname);
+                                    logger.info("The user name --- and contact is: "+contactId);
+                                    //databaseManagement.updateRoster(userJID, contactId, nickname);
                                     //TODO: Update the user roster
                                 }else if(event.isEndElement() && event2.asEndElement().getName().getLocalPart().equals("query")) break; else{
                                     break;

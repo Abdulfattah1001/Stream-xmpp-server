@@ -253,6 +253,7 @@ public class StreamServer {
                                 PresenceTagParser presenceTagParser = new PresenceTagParser(connection, xmlEventReader, startElement);
                                 presenceTagParser.parse();
                                 break;
+                               
                             default:
                                 break;
                         }

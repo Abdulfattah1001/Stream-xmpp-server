@@ -17,7 +17,6 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import com.google.firebase.internal.HttpErrorHandler;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
@@ -66,7 +65,6 @@ public class CustomHttpServer {
                     
                     String contact = jsonObject.getString("contactId"); //The phone number of the user in E164 Format
                     String user_id = jsonObject.getString("uid"); //The unique user ID of the user as generated on the Platform Backend Server
-                    String contactId = "stream@" + contact; //Example is stream@2349063109106
 
                     if(management != null){
                         
@@ -147,11 +145,8 @@ public class CustomHttpServer {
                 String query = exchange.getRequestURI().getQuery();
 
                 OutputStream os = exchange.getResponseBody();
-                InputStream is = exchange.getRequestBody();
 
                 OutputStreamWriter writer = new OutputStreamWriter(os);
-                InputStreamReader inputStreamReader = new InputStreamReader(is);
-                BufferedReader read = new BufferedReader(inputStreamReader);
 
                 //Map<String, String> result = new HashMap();
 

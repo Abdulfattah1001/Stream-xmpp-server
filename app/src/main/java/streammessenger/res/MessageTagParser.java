@@ -226,6 +226,7 @@ public class MessageTagParser {
      * @param sender_id The sender id of the message
      * @param message_content The actual message content to sent it might be null for media type
      */
+    @SuppressWarnings("unused")
     private void sendNotification(String receiver_id, String sender_id, @Nullable String message_content){
         Firestore db = FirestoreClient.getFirestore();
         try {

@@ -253,6 +253,10 @@ public class StreamServer {
                                 PresenceTagParser presenceTagParser = new PresenceTagParser(connection, xmlEventReader, startElement);
                                 presenceTagParser.parse();
                                 break;
+                            case "received":
+                                Receipt receipt = new Receipt(startElement, xmlEventReader);
+                                receipt.start();
+                                break;    
                                
                             default:
                                 break;

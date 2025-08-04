@@ -8,12 +8,16 @@ import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.net.InetSocketAddress;
 import java.sql.SQLException;
+import java.util.HashMap;
+import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import com.google.firebase.internal.HttpErrorHandler;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
@@ -84,6 +88,101 @@ public class CustomHttpServer {
                 }
                 logger.info(() -> "The request body is: "+builder.toString());
             }
+            }
+        });
+        
+        server.createContext("/api/update_roster", new HttpHandler() {
+            @Override
+            public void handle(HttpExchange exchange) throws IOException{
+                String method = exchange.getRequestMethod();
+
+                if(method.equalsIgnoreCase("POST")){
+                    OutputStream os = exchange.getResponseBody();
+                    InputStream is = exchange.getRequestBody();
+
+                    OutputStreamWriter writer = new OutputStreamWriter(os);
+                    InputStreamReader inputStreamReader = new InputStreamReader(is);
+                    BufferedReader read = new BufferedReader(inputStreamReader);
+
+                    StringBuilder builder = new StringBuilder();
+                    String line;
+
+                    while((line =  read.readLine()) != null){
+                        builder.append(line);
+                    }
+
+                    try{
+                        JSONArray rosters = new JSONArray(builder.toString());
+                        for(int i = 0; i < rosters.length(); i++){
+                            JSONObject roster = rosters.getJSONObject(i);
+                            String uid = roster.getString("uid"); //The present user
+                            String contactId = roster.getString("contactId"); //The contact user uid
+                            String displayName = roster.getString("displayName"); //The contact saved name
+                            
+                            management.insertItemIntoRoster(uid, contactId, displayName); ///Insert the item into the roster
+                        }
+
+                        
+                    }catch(JSONException exception){}
+
+                    try{
+                        JSONObject response = new JSONObject();
+                        response.put("status", "sucsess");
+                        response.put("message", "rosters updates successfully");
+                        response.put("code", "200");
+
+                        writer.write(response.toString());
+                        writer.flush();
+                        writer.close();
+
+                    }catch(JSONException exception){}
+                }
+            }
+        });
+
+        server.createContext("/api/rosters", new HttpHandler() {
+            @Override
+            public void handle(HttpExchange exchange){
+                String method = exchange.getRequestMethod();
+                String query = exchange.getRequestURI().getQuery();
+
+                OutputStream os = exchange.getResponseBody();
+                InputStream is = exchange.getRequestBody();
+
+                OutputStreamWriter writer = new OutputStreamWriter(os);
+                InputStreamReader inputStreamReader = new InputStreamReader(is);
+                BufferedReader read = new BufferedReader(inputStreamReader);
+
+                //Map<String, String> result = new HashMap();
+
+                String[] pairs = query.split("&");
+                String[] keyValue =  pairs[0].split("=");
+
+                logger.info("The query is "+query);
+                logger.info("The keyvalue is "+pairs[0]);
+
+                if(method.equalsIgnoreCase("GET")){
+                    List<HashMap<String, Object>> rosters = management.getRosters(keyValue[1]);
+                    logger.info("The rosters result is "+rosters);
+
+                    try{
+                        JSONArray array = new JSONArray();
+                        for(HashMap<String, Object> ros : rosters){
+                            JSONObject object = new JSONObject();
+                            object.put("contactId", ros.get("contactId"));
+                            object.put("displayName", ros.get("displayName"));
+
+                            array.put(object);
+                        }
+
+                        writer.write(array.toString());
+                        writer.flush();
+
+
+                    }catch(JSONException | IOException exception){
+
+                    }
+                }
             }
         });
         server.setExecutor(null);

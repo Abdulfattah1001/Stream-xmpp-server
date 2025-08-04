@@ -13,6 +13,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
 public class DatabaseManagement {
     private final String username;
@@ -272,6 +273,42 @@ public class DatabaseManagement {
     }
 
 
+    /**
+     * Updates and insert a message into the offline message for the receipient to come online 
+     * @param senderId  The Sender UID
+     * @param receiverId The reciver UID
+     * @param messageType The message TYPE of the 
+     * @param messageId The message ID
+     * @param encryptedPayload The message payload
+     * @param timestamp The timestamp of the message
+     * @param mediaUrl The media URL if it's media
+     */
+    public void cacheMessageForOfflineUser(String senderId, String receiverId, String messageType, String messageId, String encryptedPayload, String timestamp, @Nullable String mediaUrl){
+        logger.info("Inserting message into the offline message tables");
+        try{
+            String query = "INSERT INTO offline_messages(messageId, receipientId, senderId, messageType, timestamp, encryptedPayload, mediaUrl)  VALUES(?,?,?,?,?,?,?)";
+            PreparedStatement statement = connection.prepareStatement(query);
+            statement.setString(1, messageId);
+            statement.setString(2, receiverId);
+            statement.setString(3, senderId);
+            statement.setString(4, messageType);
+            statement.setString(5, timestamp);
+            statement.setString(6, encryptedPayload);
+            statement.setString(7, mediaUrl);
+
+            int result = statement.executeUpdate();
+
+            //ResultSet resultSet = statement.executeQuery();
+
+
+
+        }catch(SQLException exception){
+            logger.info(("Error occurred caching message: "+exception.getMessage()));
+        }
+    }
+
+
+
     public List<HashMap<String, String>> check_for_offline_message(String user_id){
         List<HashMap<String, String>> offline_messages = new ArrayList<>();
         try{
@@ -303,7 +340,7 @@ public class DatabaseManagement {
 
     public String getContactById(String id){
         try{
-            String statement = "SELECT contactId FROM users WHERE id = ?";
+            String statement = "SELECT contactId FROM users WHERE uid = ?";
             PreparedStatement preparedStatement = connection.prepareStatement(statement);
             preparedStatement.setString(1, id);
             ResultSet resultSet = preparedStatement.executeQuery();
@@ -317,7 +354,7 @@ public class DatabaseManagement {
 
     public boolean checkOfflineMessages(String uid){
         try{
-            String queryString = "SELECT * FROM offline_messages WHERE receiver_id = ? LIMIT 1";
+            String queryString = "SELECT * FROM offline_messages WHERE receipientId = ? LIMIT 1";
             PreparedStatement statement = connection.prepareStatement(queryString);
             statement.setString(1, uid);
 
@@ -338,15 +375,14 @@ public class DatabaseManagement {
     public List<HashMap<String, Object>> getRosters(@Nonnull String jid){
         ArrayList<HashMap<String, Object>> users = new ArrayList<>();
         try{
-            String query = "SELECT * FROM rosters WHERE id = ?";
+            String query = "SELECT * FROM rosters WHERE uid = ?";
             PreparedStatement preparedStatement = connection.prepareStatement(query);
             preparedStatement.setString(1, jid);
             ResultSet resultSet = preparedStatement.executeQuery();
             while(resultSet.next()){
                 HashMap<String, Object> user = new HashMap<>();
-                user.put("display_name", resultSet.getString("display_name"));
-                user.put("phone_number", resultSet.getString("phone_number"));
-                user.put("subscription", resultSet.getString("subscription"));
+                user.put("displayName", resultSet.getString("displayName"));
+                user.put("contactId", resultSet.getString("contactId"));
                 users.add(user);
             }
         }catch(SQLException exception){
@@ -359,7 +395,29 @@ public class DatabaseManagement {
      * -----------------THE ROSTER MANAGEMENT STARTS HERE---------------------
      */
 
-    
+
+     /**
+      * Updates the roster for the local user of uid 
+      * @param uid The uid of the local user
+      * @param contactId The contact id of the remote user
+      */
+    public void insertItemIntoRoster(String uid, String contactId, String displayName){
+        try{
+            String updates = "INSERT INTO rosters (uid, contactId, displayName) VALUES(?,?,?)";
+            PreparedStatement statement = connection.prepareStatement(updates);
+            statement.setString(1, uid);
+            statement.setString(2, contactId);
+            statement.setString(3, displayName);
+
+            statement.executeUpdate();
+
+        }catch(SQLException exception){
+            logger.info("Exception updating the user roster: "+exception.getMessage());
+        }
+    }
+
+
+    @Deprecated
     public void updateRoster(String userId, String jid, String nickname){
         //TODO: Check if the item already exist, thereby not performing the operation
         try{
@@ -473,8 +531,52 @@ public class DatabaseManagement {
         return SubscriptionStatus.BOTH;
     }
 
-    
+    /**
+     * Query the roster for a user
+     * @param uid The owner of roster(receiver)
+     * @param contactId The peer user (sender)
+     * @return A boolean value representing the result of the query
+     */
+    public boolean isFriends(@Nonnull String uid, @Nonnull String contactId){
+        try{
+            String query = "SELECT * FROM rosters WHERE uid = ? AND contactId = ? LIMIT 1";
+            PreparedStatement statement = connection.prepareStatement(query);
+            statement.setString(1, contactId);
+            statement.setString(2, uid);
+            
+            ResultSet resultSet = statement.executeQuery();
+            if(resultSet.next()) return true;
+        }catch(SQLException exception){
+            logger.info("Error occurred querying the rosters for user "+uid);
+        }
+        return false;
+    }
 
+
+    /**
+     * Fetches a user info from the database
+     * @param contactId The contactId of the user
+     * @return StreamUser
+     */
+    public StreamUser getUserByContactId(String contactId){
+        try{
+            String query = "SELECT * FROM users WHERE contactId = ?";
+            PreparedStatement statement = connection.prepareStatement(query);
+            statement.setString(1, contactId);
+
+            ResultSet resultSet = statement.executeQuery();
+
+            if(resultSet.next()){
+                StreamUser user = new StreamUser(resultSet.getString("uid"), resultSet.getString("displayName"), resultSet.getString("avatarUrl"));
+                return user;
+            }
+        }catch(SQLException exception){
+            logger.info("Error getting Stream User "+exception.getMessage());
+        }
+
+        return null;
+    }
+    
     public void cache_message_for_offline_user(String receiver_id, String sender_id, String content){
         if(connection != null){
             try{

@@ -119,6 +119,14 @@ public class AuthParser {
 
                                 connectionHandler.setUserContact(contact);
 
+                                //Check for offline messages
+
+                                logger.info("Checking for offline messages ....");
+
+                                OfflineMessages offlineMessages = new OfflineMessages(contact);
+
+                                offlineMessages.sendOfflineMessages();
+
                             }catch(IOException exception){
                                 logger.info("Error occurred: "+exception.getMessage());
                             }

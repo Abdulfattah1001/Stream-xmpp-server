@@ -11,6 +11,8 @@ public class OfflineMessages {
     }
 
     private boolean checkForOfflineMessages(){
+         logger.info("Checking for offline messages  offlinemessage....");
+
         DatabaseManagement db = DatabaseManagement.getInstance(CredentialManager.getPassword(), CredentialManager.getDatabaseUsername(), CredentialManager.getDatabaseName());
         if(db.checkOfflineMessages(this.uid)){
             logger.info("Offline message are available for user "+this.uid);
@@ -22,6 +24,6 @@ public class OfflineMessages {
     }
 
     public void sendOfflineMessages(){
-        DatabaseManagement db = DatabaseManagement.getInstance(CredentialManager.getPassword(), CredentialManager.getDatabaseUsername(), CredentialManager.getDatabaseName());
+        checkForOfflineMessages();
     }
 }

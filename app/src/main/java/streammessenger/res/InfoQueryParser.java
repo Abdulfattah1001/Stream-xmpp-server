@@ -52,7 +52,6 @@ public class InfoQueryParser {
                                     StartElement itemStartElement = event2.asStartElement();
                                     String contactId = itemStartElement.getAttributeByName(new QName("jid")).getValue(); //The contactId of the user to add to the roster
                                     logger.info("The user name --- and contact is: "+contactId);
-                                    //databaseManagement.updateRoster(userJID, contactId, nickname);
                                     //TODO: Update the user roster
                                 }else if(event.isEndElement() && event2.asEndElement().getName().getLocalPart().equals("query")) break; else{
                                     break;

@@ -17,6 +17,7 @@ import javax.annotation.Nullable;
 import javax.xml.namespace.QName;
 import javax.xml.stream.XMLEventReader;
 import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.events.Attribute;
 import javax.xml.stream.events.StartElement;
 import javax.xml.stream.events.XMLEvent;
 
@@ -118,47 +119,47 @@ public class MessageTagParser {
                             if(event.isCharacters() && event.asCharacters().isWhiteSpace()) event = reader.nextEvent();
                             
                             if(event.isStartElement() && event.asStartElement().getName().getLocalPart().equals("disappear")){
-
-                                logger.info("Processing the disappear element tag");
                                 message.append("<disappear>");
-                            }
-                            
-                            if(event.isStartElement() && event.asStartElement().getName().getLocalPart().equals("expire-after")){
-                                logger.info("expire body  ........................");
-                                message.append("<expire-after>");
-                                StringBuilder expireBody = new StringBuilder();
                                 while(reader.hasNext()){
-                                    logger.info("Start only once 3........................................");
                                     event = reader.nextEvent();
-                                    if(event.isCharacters() && event.asCharacters().isWhiteSpace()) event = reader.nextEvent();
 
-                                    if(event.isCharacters()){
-                                        expireBody.append(event.asCharacters().getData());
+                                    if(event.isStartElement() && event.asStartElement().getName().getLocalPart().equals("expire-after")){
+                                        message.append("<expire-after>");
+                                        StringBuilder expireBody = new StringBuilder();
+                                        while(reader.hasNext()){
+                                            event = reader.nextEvent();
+                                            if(event.isCharacters() && event.asCharacters().isWhiteSpace()) event = reader.nextEvent();
+
+                                            if(event.isCharacters()){
+                                                expireBody.append(event.asCharacters().getData());
+                                            }
+
+                                            logger.info("The expire duration is: "+expireBody);
+
+                                            if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("expire-after")){
+                                                message.append("</expire-after>");
+                                                logger.info("Expire-after tag reached");
+                                                message.append(expireBody);
+                                                break;
+                                            }
+                                        }
+
                                     }
-                                        
-                                    logger.info("The expire duration is: "+expireBody);
 
-                                    if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("expire-after")){
-                                        message.append("</expire-after>");
-                                        logger.info("Expire-after tag reached");
-                                        message.append(expireBody);
+                                    if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("disappear")){
+                                        message.append("</disappear>");
+                                        logger.info("End tag disappaer");
                                         break;
                                     }
                                 }
-
-                                //break;
-
                             }
 
-                            if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("disappear")){
-                                logger.info("DISAPPEAR ENDIN");
+                            if(event.isStartElement() && event.asStartElement().getName().getLocalPart().equals("message")){
+                                logger.info("Message ends tag reached");
                                 break;
                             }
-                            //break;
                         }
 
-                        logger.info("BREAK OUT OF BODY TAG");
-                        
                         break;
                 }
             }
@@ -201,7 +202,8 @@ public class MessageTagParser {
 
         message.append("<request xmlns='urn:xmpp:receipts'/>\n"); //Read receipt for messaging
 
-        message.append("</stream:message>");
+        message.append("</stream:message>\n");
+        message.append("<not-implemented />\n");
 
         if(StreamServer.connections.containsKey(receiver_contact)){
             Socket sock = StreamServer.connections.get(receiver_contact);
@@ -219,6 +221,199 @@ public class MessageTagParser {
         }
         logger.info("The complete message to send is: "+message);
     }
+
+
+    public void processMessage() throws XMLStreamException{
+        String sender = messageStartElement.getAttributeByName(new QName("from")).getValue();
+        String receiver = messageStartElement.getAttributeByName(new QName("to")).getValue();
+        String messageId = messageStartElement.getAttributeByName(new QName("id")).getValue();
+
+        Attribute timestampAttr = messageStartElement.getAttributeByName(new QName("timestamp"));
+        Attribute typeAttr = messageStartElement.getAttributeByName(new QName("type"));
+
+        StringBuilder message = new StringBuilder();
+        message.append("<stream:message\n")
+                .append("from='"+ sender +"'\n");
+
+        if(timestampAttr != null) message.append("timestamp='"+ timestampAttr.getValue() +"'\n");
+
+        if(typeAttr != null) message.append("type='"+ typeAttr.getValue() +"'\n");
+
+        message.append("to='"+ receiver +"'\n")
+                .append("id='"+ messageId +"'>\n");
+
+
+        while(reader.hasNext()){
+            XMLEvent event = reader.nextEvent();
+
+            if(event.isStartElement()){
+                StartElement tagStartElement = event.asStartElement();
+                String tagName = tagStartElement.getName().getLocalPart();
+
+                switch (tagName) {
+                    case "body":
+                        message.append("<body>");
+                        StringBuilder body = new StringBuilder("");
+                        while(reader.hasNext()){
+                            event = reader.nextEvent();
+
+                            if(event.isCharacters() && event.asCharacters().isWhiteSpace()) continue;
+
+                            if(event.isCharacters()){
+                                body.append(event.asCharacters().getData());
+                            }
+
+                            if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("body")){
+                                message.append(body); // The content of the message
+                                message.append("</body>"); //Message end tag
+                                break;
+                            }
+                        }
+                        break;
+                    case "disappear":
+                        message.append("<disappear>\n");
+
+                        while (reader.hasNext()) {
+                            event = reader.nextEvent();
+
+                            if(event.isCharacters() && event.asCharacters().isWhiteSpace()) continue;
+
+                            if(event.isStartElement() && event.asStartElement().getName().getLocalPart().equals("expire-after")){
+                                message.append("<expire-after>");
+                                StringBuilder expire = new StringBuilder();
+                                while(reader.hasNext()){
+                                    event = reader.nextEvent();
+
+                                    if(event.isCharacters() && event.asCharacters().isWhiteSpace()) continue;
+
+                                    if(event.isCharacters()){
+                                        expire.append(event.asCharacters().getData());
+                                    }
+
+                                    if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("expire-after")){
+                                        message.append(expire);
+                                        message.append("</expire-after>");
+                                        break; //Done processing <expire-after></expire-after>
+                                    }
+                                }
+                            }
+
+                            if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("disappear")){
+                                message.append("</disappear>");
+                                break; //Done processing <diappear> ... </disappear>
+                            }
+                        }
+
+                    case "audio":
+                        
+                        String audioUrl = tagStartElement.getAttributeByName(new QName("url")).getValue();
+
+                        while(reader.hasNext()){
+                            event = reader.nextEvent();
+
+                            if(event.isCharacters() && event.asCharacters().isWhiteSpace()) continue;
+
+                            if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("audio")){
+                                message.append("<audio url='"+ audioUrl +"'/>");
+                                break; //Done processing the <audio /> tags
+                            }
+                        }    
+
+                        break;
+                    case "video":
+                    
+                        String videoUrl = tagStartElement.getAttributeByName(new QName("url")).getValue();
+
+                        while(reader.hasNext()){
+                            event = reader.nextEvent();
+
+                            if(event.isCharacters() && event.asCharacters().isWhiteSpace()) continue;
+
+                            if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("video")){
+                                message.append("<video url='"+ videoUrl +"'/>");
+                                break; //Done processing the <video /> tags
+                            }
+                        }    
+
+                        break;     
+                        
+                    case "received": //Received receipts processing
+                        logger.info("The receiver has received the message .... processing");
+                        while(reader.hasNext()){
+                            event = reader.nextEvent();
+
+                            if(event.isCharacters() && event.asCharacters().isWhiteSpace()) continue;
+
+                            if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("received")){
+
+                                logger.info("Sending a received receipt to the sender of the original message with message id: ");
+                                
+                                message.append("<received xmlns='urn:xmpp:receipts:received'/>\n");
+                                break;
+                            }
+                        }
+                        break;
+                    
+                    case "request": //The sender of the message explicity requesting for the received receipt
+                        message.append("<request xmlns='urn:xmpp:receipts' />\n");
+                        break;
+                            
+                    default:
+                        break;
+                }
+            }
+
+            if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("message")){
+                logger.info("End of message tag element reached...");
+                break;
+            }
+        }
+
+        logger.info("Message processed");
+
+        if(databaseManagement.isFriends(receiver, sender) == true){
+            
+            StreamUser user = databaseManagement.getUserByContactId(sender);
+
+            if(user != null){
+                message.append("<sender-meta xmlns='urn:xmpp:sender:meta:0'>\n");
+
+                //Display name of the sender
+                message.append("<display-name>\n");
+                message.append(user.getDisplayName()+"\n");
+                message.append("</display-name>\n");
+
+                //The avatar url of the sender
+                message.append("<avatar>\n");
+                message.append(user.getAvatarUrl()+"\n");
+                message.append("</avatar>\n");
+
+                message.append("</sender-meta>\n");
+            }
+            
+        }
+
+        message.append("</stream:message>\n");
+        message.append("<not-implemented />\n");
+
+        logger.info("The complete message to send is: \n"+message);
+
+        if(StreamServer.connections.containsKey(receiver)){
+            Socket sock = StreamServer.connections.get(receiver);
+            if(sock.isConnected()){
+                try{
+                    OutputStreamWriter receiver_writer = new OutputStreamWriter(sock.getOutputStream());
+                    receiver_writer.write(String.valueOf(message));
+                    receiver_writer.flush();
+                } catch (Exception e) {
+                    //databaseManagement.cacheMessageForOfflineUser(sender, receiver, messageType, messageId, body.toString(), timestamp, mediaUrl);
+                }
+            }
+        }else{
+            //databaseManagement.cacheMessageForOfflineUser(sender, receiver, messageType, messageId, body.toString(), timestamp, mediaUrl);
+        }
+    }
+
 
     /**
      * Notify the receiver of the message

@@ -241,7 +241,8 @@ public class StreamServer {
                             
                             case "message":
                                 MessageTagParser messageTagParser = new MessageTagParser(connection, startElement, xmlEventReader);
-                                messageTagParser.parseMessageTag();
+                                //messageTagParser.parseMessageTag();
+                                messageTagParser.processMessage();
                                 break;
 
                             case "iq": //The Roster presence information enquiries

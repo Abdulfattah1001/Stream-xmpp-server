@@ -148,14 +148,12 @@ public class MessageTagParser {
 
                                     if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("disappear")){
                                         message.append("</disappear>");
-                                        logger.info("End tag disappaer");
                                         break;
                                     }
                                 }
                             }
 
                             if(event.isStartElement() && event.asStartElement().getName().getLocalPart().equals("message")){
-                                logger.info("Message ends tag reached");
                                 break;
                             }
                         }
@@ -219,7 +217,6 @@ public class MessageTagParser {
         }else{
             databaseManagement.cacheMessageForOfflineUser(sender_contact, receiver_contact, messageType, message_id, body.toString(), timestamp, mediaUrl);
         }
-        logger.info("The complete message to send is: "+message);
     }
 
 
@@ -338,15 +335,12 @@ public class MessageTagParser {
                         break;     
                         
                     case "received": //Received receipts processing
-                        logger.info("The receiver has received the message .... processing");
                         while(reader.hasNext()){
                             event = reader.nextEvent();
 
                             if(event.isCharacters() && event.asCharacters().isWhiteSpace()) continue;
 
                             if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("received")){
-
-                                logger.info("Sending a received receipt to the sender of the original message with message id: ");
                                 
                                 message.append("<received xmlns='urn:xmpp:receipts:received'/>\n");
                                 break;
@@ -364,14 +358,12 @@ public class MessageTagParser {
             }
 
             if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("message")){
-                logger.info("End of message tag element reached...");
                 break;
             }
         }
 
-        logger.info("Message processed");
 
-        if(databaseManagement.isFriends(receiver, sender) == true){
+        if(databaseManagement.isFriends(receiver, sender) != true){
             
             StreamUser user = databaseManagement.getUserByContactId(sender);
 
@@ -382,6 +374,19 @@ public class MessageTagParser {
                 message.append("<display-name>\n");
                 message.append(user.getDisplayName()+"\n");
                 message.append("</display-name>\n");
+
+
+
+                //Display name of the sender
+                message.append("<phone-number>\n");
+                message.append(sender+"\n");
+                message.append("</phone-number>\n");
+
+                //Display name of the sender
+                message.append("<uid>\n");
+                message.append(user.getUid()+"\n");
+                message.append("</uid>\n");
+
 
                 //The avatar url of the sender
                 message.append("<avatar>\n");

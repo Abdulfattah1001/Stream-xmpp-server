@@ -63,46 +63,6 @@ public class DatabaseManagement {
     }
 
     /**
-     * Authenticate based on the user Id passed and returns either false or true
-     * @param contactId The phone_number of the user
-     * @param password The password of the user
-     * @return A boolean value either false or true
-     * @deprecated This method is no longer in use as the
-     * authentication mechanism is now based on token
-     */
-    @Deprecated
-    public boolean authenticateUserID(@Nonnull String contactId, @Nonnull String password){
-        try{
-            String query = "SELECT * FROM users WHERE contactId = ? LIMIT 1";
-            PreparedStatement preparedStatement = connection.prepareStatement(query);
-            preparedStatement.setString(1, contactId);
-            ResultSet resultSet = preparedStatement.executeQuery();
-            resultSet.next();
-            String pswd = resultSet.getString("password");
-            if(pswd.equals(Base64.getEncoder().encodeToString(password.getBytes()))) return true;
-            //if(resultSet.next()) return true;
-        }catch(SQLException exception){
-            logger.info(() -> "Exception occurred authenticating user with error: "+exception.getMessage());
-        }
-        return false;
-    }
-
-    /* 
-    public boolean authenticateUserToken(String phone_number){
-        if(connection == null) logger.info("Database is empty");
-        try{
-            String query = "SELECT * FROM users WHERE phone_number = ?";
-            PreparedStatement statement = connection.prepareStatement(query);
-            statement.setString(1, phone_number);
-            ResultSet resultSet = statement.executeQuery();
-            if(resultSet.next()) return true;
-        }catch(SQLException exception){
-            logger.info("Error occurred while getting user from the database: "+exception.getMessage());
-        }
-        return false;
-    }*/
-
-    /**
      * Creates a new user with column {phone_number, user_id, status}
      * @param contactId The phone_number of the user
      * @param userId The unique user identity of the user
@@ -146,7 +106,6 @@ public class DatabaseManagement {
       * @param contactId The string representation of the user contact id
       * @return Boolean value representing the user status
      */
-    @Deprecated
     private boolean isUserExists(@Nonnull String contactId){
         try {
             String query = "SELECT contactId FROM users WHERE contactId = ?";
@@ -203,52 +162,6 @@ public class DatabaseManagement {
                 
             }
         }
-        return false;
-    }
-
-    /**
-     * Authenticate user based on the user id of the user
-     * @param user_id The user id of the user
-     * @return boolean state of the authentication status
-     */
-    @Deprecated
-    public boolean authenticateUserByUID(String user_id){
-
-        if(connection != null){
-            try{
-                String query = "SELECT * FROM users WHERE id = ? LIMIT 1";
-                PreparedStatement preparedStatement = connection.prepareStatement(query);
-                preparedStatement.setString(1, user_id);
-                ResultSet result = preparedStatement.executeQuery();
-
-                if(result.next()) return true;
-
-            }catch(SQLException exception){}
-        }
-        return false;
-    }
-    
-
-    /**
-     * Authenticate the user based on the phone number
-     * @param phone_number The phone number of the user in ES614 format
-     * @return A boolean value representing the state of the user status
-     */
-    @Deprecated
-    public boolean authenticatedUserByPhoneNumber(String phone_number){
-        if(connection != null){
-            try {
-                String query = "SELECT * FROM users WHERE contactId == ?";
-                PreparedStatement preparedStatement = connection.prepareStatement(query);
-                preparedStatement.setString(1, phone_number);
-                ResultSet resultSet  = preparedStatement.executeQuery();
-
-                return resultSet.next();
-            }catch (SQLException exception){
-                logger.info("Error occured checking for user: "+exception.getMessage());
-            }
-        }
-
         return false;
     }
     
@@ -413,24 +326,6 @@ public class DatabaseManagement {
 
         }catch(SQLException exception){
             logger.info("Exception updating the user roster: "+exception.getMessage());
-        }
-    }
-
-
-    @Deprecated
-    public void updateRoster(String userId, String jid, String nickname){
-        //TODO: Check if the item already exist, thereby not performing the operation
-        try{
-            String query = "INSERT INTO rosters (user_id, contact_id /**, nickname*/) VALUES(?,?)";
-            PreparedStatement preparedStatement = connection.prepareStatement(query);
-            preparedStatement.setString(1, userId);
-            preparedStatement.setString(2, jid);
-            //preparedStatement.setString(3, nickname);
-            //preparedStatement.setString(4, bio);
-            @SuppressWarnings("unused")
-            int result = preparedStatement.executeUpdate();
-        }catch(SQLException exception){
-            logger.info(() -> "Error occurred  :"+exception.getMessage());
         }
     }
 

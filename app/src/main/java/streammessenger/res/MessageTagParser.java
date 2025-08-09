@@ -16,6 +16,7 @@ import java.util.logging.Logger;
 import javax.annotation.Nullable;
 import javax.xml.namespace.QName;
 import javax.xml.stream.XMLEventReader;
+import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.events.Attribute;
 import javax.xml.stream.events.StartElement;
@@ -37,188 +38,6 @@ public class MessageTagParser {
         this.reader = reader;
         databaseManagement = DatabaseManagement.getInstance(CredentialManager.getPassword(), CredentialManager.getDatabaseUsername(), CredentialManager.getDatabaseName());
     }
-
-    public void parseMessageTag() throws XMLStreamException {
-        String sender_contact = messageStartElement.getAttributeByName(new QName("from")).getValue();
-        String receiver_contact = messageStartElement.getAttributeByName(new QName("to")).getValue();
-        String messageType = messageStartElement.getAttributeByName(new QName("type")).getValue();
-        String timestamp = messageStartElement.getAttributeByName(new QName("timestamp")).getValue();
-        String message_id = messageStartElement.getAttributeByName(new QName("id")).getValue();
-        String mediaUrl = null;
-
-        StringBuilder message = new StringBuilder();
-        message.append("<stream:message\n")
-                .append("from='" + sender_contact + "'\n")
-                .append("to='" + receiver_contact + "'\n")
-                .append("message_id='" + message_id + "'\n")
-                .append("timestamp='" + timestamp + "'\n")
-                .append("type='" + messageType + "'>\n");
-
-
-        StringBuilder body = new StringBuilder("");
-
-        while(reader.hasNext()){
-            XMLEvent event = reader.nextEvent();
-            if(event.isStartElement() && event.asStartElement().getName().getLocalPart().equals("body")){
-                switch (messageType){
-                    case "TEXT":
-                        while (reader.hasNext()){
-                            event = reader.nextEvent();
-                            if(event.isCharacters() && event.asCharacters().isWhiteSpace()) event = reader.nextEvent();
-
-                            if(event.isCharacters()){
-                                body.append(event.asCharacters().getData());
-                            }
-                            if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("body")){
-
-                                if(!body.isEmpty()){
-                                    message.append("<body>"); /// Start tag of the body element
-                                    message.append(body); /// The main content of the message
-                                    message.append("</body>"); /// The close tag of the message
-                                }
-
-                                break;///Break out of the inner loop
-                            }
-                        }
-                        break;
-                    case "IMAGE":
-                        StartElement bodyStartElement = event.asStartElement();
-                        String url = bodyStartElement.getAttributeByName(new QName("url")).getValue();
-                        mediaUrl = url;
-                        message.append("<body url='"+ url +"'>\n");
-                        while (reader.hasNext()){
-                            event = reader.nextEvent();
-                            if(event.isCharacters() && event.asCharacters().isWhiteSpace()) event = reader.nextEvent();
-
-                            if(event.isCharacters()){
-                                body.append(event.asCharacters().getData()); /// Appends the Caption of the image
-                            }
-                            if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("body")){
-                                if(!body.isEmpty()){
-                                    message.append(body);
-                                }
-                                message.append("</body>"); /// Appends the close tag for the message <body></body> element
-                                break;
-                            }
-                        }
-                        break;
-                    case "VIDEO":
-                        break;
-                    case "AUDIO": //Voice note
-                        break;
-                    case "DISAPPEARING_MESSAGE": //Disappearing message
-                        logger.info("Processing DISAPPEARING MESSAGE");
-                        String text = "This message timer has been updated, Tap To change";
-                        message.append("<body>");
-                        message.append(text);
-                        message.append("</body>");
-                        
-                        while (reader.hasNext()) {
-                            event = reader.nextEvent();
-
-                            if(event.isCharacters() && event.asCharacters().isWhiteSpace()) event = reader.nextEvent();
-                            
-                            if(event.isStartElement() && event.asStartElement().getName().getLocalPart().equals("disappear")){
-                                message.append("<disappear>");
-                                while(reader.hasNext()){
-                                    event = reader.nextEvent();
-
-                                    if(event.isStartElement() && event.asStartElement().getName().getLocalPart().equals("expire-after")){
-                                        message.append("<expire-after>");
-                                        StringBuilder expireBody = new StringBuilder();
-                                        while(reader.hasNext()){
-                                            event = reader.nextEvent();
-                                            if(event.isCharacters() && event.asCharacters().isWhiteSpace()) event = reader.nextEvent();
-
-                                            if(event.isCharacters()){
-                                                expireBody.append(event.asCharacters().getData());
-                                            }
-
-                                            logger.info("The expire duration is: "+expireBody);
-
-                                            if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("expire-after")){
-                                                message.append("</expire-after>");
-                                                logger.info("Expire-after tag reached");
-                                                message.append(expireBody);
-                                                break;
-                                            }
-                                        }
-
-                                    }
-
-                                    if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("disappear")){
-                                        message.append("</disappear>");
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if(event.isStartElement() && event.asStartElement().getName().getLocalPart().equals("message")){
-                                break;
-                            }
-                        }
-
-                        break;
-                }
-            }
-
-
-            if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("body")){
-                logger.info("Ending of the body message tag element reached");
-                break;
-            } ///Break out of the loop
-
-            if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("message")){
-                logger.info("Ending of the message tag element reached");
-                break;
-            } ///Break out of the loop
-            
-        }
-
-
-        if(databaseManagement.isFriends(receiver_contact, sender_contact) == true){
-            
-            StreamUser user = databaseManagement.getUserByContactId(sender_contact);
-
-            if(user != null){
-                message.append("<sender-meta xmlns='urn:xmpp:sender:meta:0'>\n");
-
-                //Display name of the sender
-                message.append("<display-name>\n");
-                message.append(user.getDisplayName()+"\n");
-                message.append("</display-name>\n");
-
-                //The avatar url of the sender
-                message.append("<avatar>\n");
-                message.append(user.getAvatarUrl()+"\n");
-                message.append("</avatar>\n");
-
-                message.append("</sender-meta>\n");
-            }
-            
-        }
-
-        message.append("<request xmlns='urn:xmpp:receipts'/>\n"); //Read receipt for messaging
-
-        message.append("</stream:message>\n");
-        message.append("<not-implemented />\n");
-
-        if(StreamServer.connections.containsKey(receiver_contact)){
-            Socket sock = StreamServer.connections.get(receiver_contact);
-            if(sock.isConnected()){
-                try{
-                    OutputStreamWriter receiver_writer = new OutputStreamWriter(sock.getOutputStream());
-                    receiver_writer.write(String.valueOf(message));
-                    receiver_writer.flush();
-                } catch (Exception e) {
-                    databaseManagement.cacheMessageForOfflineUser(sender_contact, receiver_contact, messageType, message_id, body.toString(), timestamp, mediaUrl);
-                }
-            }
-        }else{
-            databaseManagement.cacheMessageForOfflineUser(sender_contact, receiver_contact, messageType, message_id, body.toString(), timestamp, mediaUrl);
-        }
-    }
-
 
     public void processMessage() throws XMLStreamException{
         String sender = messageStartElement.getAttributeByName(new QName("from")).getValue();
@@ -418,7 +237,6 @@ public class MessageTagParser {
             //databaseManagement.cacheMessageForOfflineUser(sender, receiver, messageType, messageId, body.toString(), timestamp, mediaUrl);
         }
     }
-
 
     /**
      * Notify the receiver of the message

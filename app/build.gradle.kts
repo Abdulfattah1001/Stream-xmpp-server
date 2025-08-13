@@ -25,6 +25,9 @@ dependencies {
 
     implementation(libs.guava)
     implementation("stax:stax-api:1.0.1")
+    //implementation("stax:stax:1.2.0")
+    //implementation("javax.xml.stream:stax-api:1.0-2")
+    //implementation("com.fasterxml.woodstox:woodstox-core:6.5.1")
     implementation("com.mysql:mysql-connector-j:9.1.0")
     implementation("org.json:json:20250107")
 
@@ -33,7 +36,7 @@ dependencies {
     implementation("com.google.protobuf:protobuf-java:4.31.1")
     implementation("io.jsonwebtoken:jjwt-api:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
-    runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
+    //runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
 }
 
 

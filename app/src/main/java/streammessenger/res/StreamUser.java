@@ -7,10 +7,11 @@ public class StreamUser {
     private String avatarUrl;
     private String displayStatus;
 
-    public StreamUser(String uid, String displayName, String avatarUrl){
+    public StreamUser(String uid, String displayName, String avatarUrl, String status){
         this.uid = uid;
         this.displayName = displayName;
         this.avatarUrl = avatarUrl;
+        this.displayStatus = status;
     }
 
     public String getUid(){
@@ -23,5 +24,8 @@ public class StreamUser {
 
     public String getAvatarUrl(){
         return this.avatarUrl;
+    }
+    public String getStatus(){
+        return this.displayStatus;
     }
 }

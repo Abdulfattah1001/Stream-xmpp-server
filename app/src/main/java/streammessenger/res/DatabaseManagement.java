@@ -6,7 +6,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.logging.Level;
@@ -90,6 +89,7 @@ public class DatabaseManagement {
             insertStatement.setString(1, uid);
             insertStatement.setString(2, jid);
 
+            @SuppressWarnings("unused")
             ResultSet resultSet = insertStatement.executeQuery();
         }catch(SQLException exception){
             logger.log(Level.WARNING,"Error occurred",exception);
@@ -209,6 +209,7 @@ public class DatabaseManagement {
             statement.setString(6, encryptedPayload);
             statement.setString(7, mediaUrl);
 
+            @SuppressWarnings("unused")
             int result = statement.executeUpdate();
 
             //ResultSet resultSet = statement.executeQuery();
@@ -462,11 +463,34 @@ public class DatabaseManagement {
             ResultSet resultSet = statement.executeQuery();
 
             if(resultSet.next()){
-                StreamUser user = new StreamUser(resultSet.getString("uid"), resultSet.getString("displayName"), resultSet.getString("avatarUrl"));
+                StreamUser user = new StreamUser(resultSet.getString("uid"), resultSet.getString("displayName"), resultSet.getString("avatarUrl"), resultSet.getString("status"));
                 return user;
             }
         }catch(SQLException exception){
             logger.info("Error getting Stream User "+exception.getMessage());
+        }
+
+        return null;
+    }
+
+
+    /**
+     * Gets and retrieved the user UID 
+     * @param contact The contact of the user to retrieve it's user id
+     * @return A string representing the user UID
+     */
+    public String getUserUID(String contact){
+        try{
+            String query = "SELECT * FROM users WHERE contactId = ? LIMIT 1";
+            PreparedStatement statement = connection.prepareStatement(query);
+            statement.setString(1, contact);
+            ResultSet resultSet = statement.executeQuery();
+
+            if(resultSet.next()){
+                return resultSet.getString("uid");
+            }
+        }catch(SQLException exception){
+            logger.info("Error occurred fetching user Id: "+exception.getMessage());
         }
 
         return null;
@@ -479,6 +503,32 @@ public class DatabaseManagement {
                 @SuppressWarnings("unused")
                 PreparedStatement statement = connection.prepareStatement(query);
             }catch(SQLException exception){}
+        }
+    }
+
+    /**
+     * Updates user info
+     * @param uid The user id of the user
+     * @param contactId The contact id of the user
+     * @param displayName The updated display name of the user
+     * @param bgUrl The avatar url of the user
+     * @param status The updates status of the user
+     */
+    public void updateUserInfo(String uid, String contactId, String displayName, String bgUrl, String status){
+        try{
+            String updateQuery = "UPDATE users SET displayName = ?, avatarUrl = ?, status = ? WHERE uid = ?";
+            PreparedStatement statement = connection.prepareStatement(updateQuery);
+            statement.setString(1, displayName);
+            statement.setString(2, bgUrl);
+            statement.setString(3, status);
+            statement.setString(4, uid);
+
+            @SuppressWarnings("unused")
+            int result = statement.executeUpdate();
+
+            logger.info("User info updated successfully ...");
+        }catch(SQLException exception){
+            logger.info("Error updating user info: "+exception.getMessage());
         }
     }
 

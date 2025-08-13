@@ -2,6 +2,7 @@ package streammessenger.res;
 
 import com.google.cloud.firestore.DocumentSnapshot;
 import com.google.cloud.firestore.Firestore;
+import com.google.common.util.concurrent.Futures;
 import com.google.firebase.cloud.FirestoreClient;
 import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.firebase.messaging.FirebaseMessagingException;
@@ -10,17 +11,20 @@ import com.google.firebase.messaging.Notification;
 
 import java.io.OutputStreamWriter;
 import java.net.Socket;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
 import java.util.logging.Logger;
 
 import javax.annotation.Nullable;
 import javax.xml.namespace.QName;
 import javax.xml.stream.XMLEventReader;
-import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.events.Attribute;
 import javax.xml.stream.events.StartElement;
 import javax.xml.stream.events.XMLEvent;
+
+import org.apache.hc.core5.concurrent.FutureCallback;
 
 
 
@@ -198,19 +202,23 @@ public class MessageTagParser {
 
                 //Display name of the sender
                 message.append("<phone-number>\n");
-                message.append(sender+"\n");
+                message.append(sender);
                 message.append("</phone-number>\n");
 
                 //Display name of the sender
                 message.append("<uid>\n");
-                message.append(user.getUid()+"\n");
+                message.append(user.getUid());
                 message.append("</uid>\n");
 
 
                 //The avatar url of the sender
                 message.append("<avatar>\n");
-                message.append(user.getAvatarUrl()+"\n");
+                message.append(user.getAvatarUrl());
                 message.append("</avatar>\n");
+
+                message.append("<status>");
+                message.append(user.getStatus());
+                message.append("</status>\n");
 
                 message.append("</sender-meta>\n");
             }
@@ -236,6 +244,8 @@ public class MessageTagParser {
         }else{
             //databaseManagement.cacheMessageForOfflineUser(sender, receiver, messageType, messageId, body.toString(), timestamp, mediaUrl);
         }
+
+        sendNotification(receiver, sender,message.toString());
     }
 
     /**
@@ -243,14 +253,20 @@ public class MessageTagParser {
      * @param receiver_id The receiver id of the message
      * @param sender_id The sender id of the message
      * @param message_content The actual message content to sent it might be null for media type
+     * //TODO: Instead of hitting the firestore to get the receiver FCM TOKEN, it can be saved on the XMPP 
+     * //Server instead.
      */
-    @SuppressWarnings("unused")
     private void sendNotification(String receiver_id, String sender_id, @Nullable String message_content){
         Firestore db = FirestoreClient.getFirestore();
+        String uid = databaseManagement.getUserUID(receiver_id);
+        if(uid != null){
+            logger.info("The user uid is: "+uid);
+        }
         try {
-            DocumentSnapshot documentSnapshot = db.collection("users").document(receiver_id).get().get();
+            DocumentSnapshot documentSnapshot = db.collection("users").document(uid).get().get();
             if(documentSnapshot.exists()){
-                String token = (String) documentSnapshot.get("fcm_token");
+                logger.info("Data is: "+documentSnapshot.getData());
+                String token = (String) documentSnapshot.get("token");
                 Message message = Message.builder()
                         .setToken(token)
                         .setNotification(Notification.builder()
@@ -258,6 +274,7 @@ public class MessageTagParser {
                                 .setBody(message_content)
                                 .build())
                         .build();
+                        
                 FirebaseMessaging.getInstance().send(message);
             }
         } catch (InterruptedException | ExecutionException e) {
@@ -265,5 +282,29 @@ public class MessageTagParser {
         } catch (FirebaseMessagingException e) {
             logger.info("Error occurred sending FCM :"+e.getMessage());
         }
+    }
+
+    private void sendNotifications(String receiverId, String senderId, String messageContent, String mediaType, String timestamp){
+
+        Firestore firestore = FirestoreClient.getFirestore();
+
+        try{
+            DocumentSnapshot documentSnapshot = firestore.collection("users").document(timestamp).get().get();
+
+            logger.info("The receiver details is: "+documentSnapshot.getData());
+            if(documentSnapshot.exists()){
+                String token = (String) documentSnapshot.get("token");
+                Message message = Message.builder()
+                .setToken(token)
+                .setNotification(Notification.builder()
+                .setTitle(senderId)
+                .setBody(messageContent)
+                .build())
+                .build();
+
+                FirebaseMessaging.getInstance().send(message);
+            }
+
+        }catch(InterruptedException | ExecutionException exception){}catch(FirebaseMessagingException exception){}
     }
 }

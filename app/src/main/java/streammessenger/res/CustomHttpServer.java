@@ -21,6 +21,8 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 
+import shaded_package.org.xmlunit.builder.Input;
+
 public class CustomHttpServer {
     private final int PORT;
     @SuppressWarnings("unused")
@@ -180,6 +182,53 @@ public class CustomHttpServer {
                 }
             }
         });
+        
+        
+        server.createContext("/api/users", new HttpHandler(){
+            @Override
+            public void handle(HttpExchange exchange) throws IOException{
+                String method = exchange.getRequestMethod();
+
+                if(method.equalsIgnoreCase("POST")){
+                    OutputStream os = exchange.getResponseBody();
+                    InputStream is = exchange.getRequestBody();
+
+                    OutputStreamWriter writer = new OutputStreamWriter(os);
+                    InputStreamReader reader = new InputStreamReader(is);
+                    BufferedReader read = new BufferedReader(reader);
+
+                    StringBuilder builder = new StringBuilder();
+                    String line;
+
+                    while((line = read.readLine()) != null){
+                        builder.append(line);
+                    }
+
+                    try{
+                        JSONObject jsonObject = new JSONObject(builder.toString());
+                        String uid = jsonObject.getString("uid");
+                        String displayName = jsonObject.getString("displayName");
+                        String bgUrl = jsonObject.getString("bgUrl");
+                        String status = jsonObject.getString("status");
+                        String phoneNumber = jsonObject.getString("phoneNumber");
+
+                        management.updateUserInfo(uid, phoneNumber, displayName, bgUrl, status);
+
+
+                        JSONObject response = new JSONObject();
+                        response.put("status", 200);
+                        response.put("message", "User info update successfully");
+
+                        writer.write(response.toString());
+                        writer.flush();
+
+                    }catch(JSONException exception){
+                        logger.info("error updating user info: "+exception.getMessage());
+                    }
+                }
+            }
+        });
+
         server.setExecutor(null);
         server.start();
     }

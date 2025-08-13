@@ -286,28 +286,4 @@ public class MessageTagParser {
             logger.info("Error occurred sending FCM :"+e.getMessage());
         }
     }
-
-    private void sendNotifications(String receiverId, String senderId, String messageContent, String mediaType, String timestamp){
-
-        Firestore firestore = FirestoreClient.getFirestore();
-
-        try{
-            DocumentSnapshot documentSnapshot = firestore.collection("users").document(timestamp).get().get();
-
-            logger.info("The receiver details is: "+documentSnapshot.getData());
-            if(documentSnapshot.exists()){
-                String token = (String) documentSnapshot.get("token");
-                Message message = Message.builder()
-                .setToken(token)
-                .setNotification(Notification.builder()
-                .setTitle(senderId)
-                .setBody(messageContent)
-                .build())
-                .build();
-
-                FirebaseMessaging.getInstance().send(message);
-            }
-
-        }catch(InterruptedException | ExecutionException exception){}catch(FirebaseMessagingException exception){}
-    }
 }

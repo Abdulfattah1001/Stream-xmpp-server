@@ -63,6 +63,7 @@ public class MessageTagParser {
                 .append("id='"+ messageId +"'>\n");
 
 
+        StringBuilder body = null;    
         while(reader.hasNext()){
             XMLEvent event = reader.nextEvent();
 
@@ -73,7 +74,7 @@ public class MessageTagParser {
                 switch (tagName) {
                     case "body":
                         message.append("<body>");
-                        StringBuilder body = new StringBuilder("");
+                        body = new StringBuilder("");
                         while(reader.hasNext()){
                             event = reader.nextEvent();
 
@@ -245,7 +246,10 @@ public class MessageTagParser {
             //databaseManagement.cacheMessageForOfflineUser(sender, receiver, messageType, messageId, body.toString(), timestamp, mediaUrl);
         }
 
-        sendNotification(receiver, sender,message.toString());
+        if(typeAttr != null){
+            String messageType = typeAttr.getValue();
+            sendNotification(receiver, sender, body.toString(), messageType);   
+        }
     }
 
     /**
@@ -256,7 +260,7 @@ public class MessageTagParser {
      * //TODO: Instead of hitting the firestore to get the receiver FCM TOKEN, it can be saved on the XMPP 
      * //Server instead.
      */
-    private void sendNotification(String receiver_id, String sender_id, @Nullable String message_content){
+    private void sendNotification(String receiver_id, String sender_id, @Nullable String message_content, String type){
         Firestore db = FirestoreClient.getFirestore();
         String uid = databaseManagement.getUserUID(receiver_id);
         if(uid != null){
@@ -265,8 +269,7 @@ public class MessageTagParser {
         try {
             DocumentSnapshot documentSnapshot = db.collection("users").document(uid).get().get();
             if(documentSnapshot.exists()){
-                logger.info("Data is: "+documentSnapshot.getData());
-                String token = (String) documentSnapshot.get("token");
+                String token = (String) documentSnapshot.get("fcm_token");
                 Message message = Message.builder()
                         .setToken(token)
                         .setNotification(Notification.builder()

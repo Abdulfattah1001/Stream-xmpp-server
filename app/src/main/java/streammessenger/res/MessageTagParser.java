@@ -9,8 +9,14 @@ import com.google.firebase.messaging.FirebaseMessagingException;
 import com.google.firebase.messaging.Message;
 import com.google.firebase.messaging.Notification;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.io.OutputStreamWriter;
+import java.net.HttpURLConnection;
 import java.net.Socket;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
@@ -25,6 +31,7 @@ import javax.xml.stream.events.StartElement;
 import javax.xml.stream.events.XMLEvent;
 
 import org.apache.hc.core5.concurrent.FutureCallback;
+import org.json.JSONObject;
 
 
 
@@ -248,7 +255,8 @@ public class MessageTagParser {
 
         if(typeAttr != null){
             String messageType = typeAttr.getValue();
-            sendNotification(receiver, sender, body.toString(), messageType);   
+            sendNotification(receiver, sender, body.toString(), messageType, messageId);
+            //sendNotificationOverHttp(receiver, sender, body.toString(), messageType, messageId);
         }
     }
 
@@ -260,7 +268,7 @@ public class MessageTagParser {
      * //TODO: Instead of hitting the firestore to get the receiver FCM TOKEN, it can be saved on the XMPP 
      * //Server instead.
      */
-    private void sendNotification(String receiver_id, String sender_id, @Nullable String message_content, String type){
+    private void sendNotification(String receiver_id, String sender_id, @Nullable String message_content, String type, String messageId){
         Firestore db = FirestoreClient.getFirestore();
         String uid = databaseManagement.getUserUID(receiver_id);
         if(uid != null){
@@ -270,7 +278,8 @@ public class MessageTagParser {
             DocumentSnapshot documentSnapshot = db.collection("users").document(uid).get().get();
             if(documentSnapshot.exists()){
                 String token = (String) documentSnapshot.get("fcm_token");
-                Message message = Message.builder()
+
+                /**Message message = Message.builder()
                         .setToken(token)
                         .setNotification(Notification.builder()
                                 .setTitle(sender_id)
@@ -278,12 +287,118 @@ public class MessageTagParser {
                                 .build())
                         .build();
                         
-                FirebaseMessaging.getInstance().send(message);
+                FirebaseMessaging.getInstance().send(message);*/
+
+                try {
+                    JSONObject jsonObject = new JSONObject();
+                    jsonObject.put("senderId", sender_id);
+                    jsonObject.put("content", message_content);
+                    jsonObject.put("messageId", messageId);
+                    jsonObject.put("token", token);
+                    // URL to connect to
+                    URL url = new URL("http://192.168.160.26:3003/api/message/notify");
+
+                    // Open connection
+                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                    conn.setRequestMethod("POST");
+                    conn.setDoOutput(true); // Needed for sending body
+                    conn.setRequestProperty("Content-Type", "application/json"); // or application/x-www-form-urlencoded
+
+
+
+                    // Request body (JSON example)
+                    //String jsonInputString = "{\"name\":\"John\", \"age\":30}";
+
+                    // Send request
+                    try (OutputStream os = conn.getOutputStream()) {
+                        //byte[] input = jsonInputString.getBytes(StandardCharsets.UTF_8);
+                        //os.write(input, 0, input.length);
+                        OutputStreamWriter w = new OutputStreamWriter(os);
+                        w.write(jsonObject.toString());
+                        w.flush();
+                    }
+
+                    // Read response
+                    int responseCode = conn.getResponseCode();
+                    System.out.println("Response Code: " + responseCode);
+                    if (responseCode == HttpURLConnection.HTTP_OK || responseCode == HttpURLConnection.HTTP_CREATED) {
+                        try (BufferedReader in = new BufferedReader(
+                                new InputStreamReader(conn.getInputStream()))) {
+                            String inputLine;
+                            StringBuilder response = new StringBuilder();
+                            while ((inputLine = in.readLine()) != null) {
+                                response.append(inputLine);
+                            }
+                            System.out.println("Response: " + response.toString());
+                        }
+                    } else {
+                        System.out.println("POST request failed.");
+                    }
+
+
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
             }
         } catch (InterruptedException | ExecutionException e) {
             logger.info("Error FCM: "+e.getMessage());
-        } catch (FirebaseMessagingException e) {
+        } catch (Exception e) {
             logger.info("Error occurred sending FCM :"+e.getMessage());
         }
     }
+
+    private void sendNotificationOverHttp(String receiverId, String senderId, String content, String type, String messageId){
+        //URL url = new URL("http://192.168.160.26:3003/api/notify")
+
+        try {
+            // URL to connect to
+            URL url = new URL("http://192.168.160.26:3003/api/message/notify");
+
+            // Open connection
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true); // Needed for sending body
+            conn.setRequestProperty("Content-Type", "application/json"); // or application/x-www-form-urlencoded
+
+            JSONObject jsonObject = new JSONObject();
+            jsonObject.put("senderId", senderId);
+            jsonObject.put("content", content);
+            jsonObject.put("messageId", messageId);
+            jsonObject.put("receiverId", receiverId);
+
+            // Request body (JSON example)
+            //String jsonInputString = "{\"name\":\"John\", \"age\":30}";
+
+            // Send request
+            try (OutputStream os = conn.getOutputStream()) {
+                //byte[] input = jsonInputString.getBytes(StandardCharsets.UTF_8);
+                //os.write(input, 0, input.length);
+                OutputStreamWriter w = new OutputStreamWriter(os);
+                w.write(jsonObject.toString());
+                w.flush();
+            }
+
+            // Read response
+            int responseCode = conn.getResponseCode();
+            System.out.println("Response Code: " + responseCode);
+            if (responseCode == HttpURLConnection.HTTP_OK || responseCode == HttpURLConnection.HTTP_CREATED) {
+                try (BufferedReader in = new BufferedReader(
+                        new InputStreamReader(conn.getInputStream()))) {
+                    String inputLine;
+                    StringBuilder response = new StringBuilder();
+                    while ((inputLine = in.readLine()) != null) {
+                        response.append(inputLine);
+                    }
+                    System.out.println("Response: " + response.toString());
+                }
+            } else {
+                System.out.println("POST request failed.");
+            }
+
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
 }

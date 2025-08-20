@@ -317,11 +317,12 @@ public class DatabaseManagement {
       */
     public void insertItemIntoRoster(String uid, String contactId, String displayName){
         try{
-            String updates = "INSERT INTO rosters (uid, contactId, displayName) VALUES(?,?,?)";
+            String updates = "INSERT INTO rosters(uid, contactId, displayName) VALUES(?,?,?)";
             PreparedStatement statement = connection.prepareStatement(updates);
             statement.setString(1, uid);
             statement.setString(2, contactId);
             statement.setString(3, displayName);
+
 
             statement.executeUpdate();
 

@@ -12,9 +12,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Logger;
 
+import javax.xml.namespace.QName;
 import javax.xml.stream.XMLEventReader;
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.events.Attribute;
 import javax.xml.stream.events.StartElement;
 import javax.xml.stream.events.XMLEvent;
 
@@ -127,8 +129,30 @@ public class StreamServer {
             streamRestarterCounter++;
 
             String streamNamespace = startElement.getName().getNamespaceURI();
-            
 
+            Attribute idAttr = startElement.getAttributeByName(new QName("id"));
+
+            if(idAttr != null){
+                String id = idAttr.getValue();
+
+                if(id != null){
+                    logger.info("The user session is already establish");
+                    try{
+                        OutputStream os = connection.getOutputStream();
+                        OutputStreamWriter writer = new OutputStreamWriter(os);
+
+                        writer.write("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'>\n"
+                                +"<session> " + id + "</session>\n"
+                                +"</success>");
+                        writer.flush();
+
+                        logger.info("Id sent");
+
+                        return;
+                    }catch(IOException e){}
+                }
+            }
+            
             try{
                 //Validating the namespace
                 if(streamNamespace.equals("http://etherx.jabber.org/streams") ){
@@ -173,6 +197,7 @@ public class StreamServer {
 
                     if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("stream")){
                         try{
+                            logger.info("Gracefully disconnecting the user from the server");
                             connections.get(user_contact).close(); //Get the user socket and close the connection
                             connections.remove(user_contact); //Remove the user connection from the hashmap
                             connection.close(); //Close the client connection, Same thin
@@ -276,8 +301,12 @@ public class StreamServer {
                         logger.info("Error occurred tearing down the user connection on disconnect: "+e.getMessage());
                     }
                 }else{
-                    //Else  the user really sent a malformed XML tag element
                     logger.info("The user really sent a malformed xml tag: "+exception.getMessage());
+
+                    //Test if the malformed tag happened because of ungraceful diconnect
+                    if(!connection.isConnected()){
+                        logger.info("Closing the connection and holding the user session");
+                    }
                 }
             }
         }

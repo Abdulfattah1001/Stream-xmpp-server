@@ -113,7 +113,15 @@ public class AuthParser {
                                 OutputStream os = socketConnection.getOutputStream();
                                 OutputStreamWriter writer = new OutputStreamWriter(os);
 
-                                writer.write("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl' />");
+                                //writer.write("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl' />");
+
+                                writer.write("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'>\n"
+                                        +"<session>" + token.getUid() + "</session>\n"
+                                        +"</success>");
+
+                                writer.flush();
+
+                                logger.info("Sends a session id....");
 
                                 StreamServer.connections.put(contact, socketConnection);
 

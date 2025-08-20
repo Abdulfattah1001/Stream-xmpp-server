@@ -21,7 +21,6 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 
-import shaded_package.org.xmlunit.builder.Input;
 
 public class CustomHttpServer {
     private final int PORT;
@@ -91,7 +90,7 @@ public class CustomHttpServer {
             }
         });
         
-        server.createContext("/api/update_roster", new HttpHandler() {
+        server.createContext("/api/roster", new HttpHandler() {
             @Override
             public void handle(HttpExchange exchange) throws IOException{
                 String method = exchange.getRequestMethod();
@@ -112,18 +111,29 @@ public class CustomHttpServer {
                     }
 
                     try{
-                        JSONArray rosters = new JSONArray(builder.toString());
-                        for(int i = 0; i < rosters.length(); i++){
-                            JSONObject roster = rosters.getJSONObject(i);
-                            String uid = roster.getString("uid"); //The present user
-                            String contactId = roster.getString("contactId"); //The contact user uid
-                            String displayName = roster.getString("displayName"); //The contact saved name
-                            
-                            management.insertItemIntoRoster(uid, contactId, displayName); ///Insert the item into the roster
-                        }
+                        JSONObject rObject = new JSONObject(builder.toString());
+                        //logger.info("The user contacts is: "+builder.toString());
+                        //logger.info("The user is: "+rObject.getString("uid"));
+                        String uid = rObject.getString("uid");
 
+                        JSONArray rArray = new JSONArray(rObject.get("data").toString());
+
+                        for(int i = 0; i < rArray.length(); i++){
+                            JSONObject object = rArray.getJSONObject(i);
+
+                            String rosterUID = object.getString("uid");
+                            String displayName = object.getString("displayName");
+                            String savedName = object.getString("savedName");
+                            String displayStatus = object.getString("displayStatus");
+                            String contactId = object.getString("contact");
+                            String fcmToken = object.getString("fcmToken");
+
+                            management.insertItemIntoRoster(uid, contactId, displayName);
+                        }
                         
-                    }catch(JSONException exception){}
+                    }catch(JSONException exception){
+                        logger.info("Error occurred: "+exception.getMessage());
+                    }
 
                     try{
                         JSONObject response = new JSONObject();

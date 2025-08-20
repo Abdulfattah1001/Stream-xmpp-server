@@ -246,6 +246,7 @@ public class MessageTagParser {
                     receiver_writer.write(String.valueOf(message));
                     receiver_writer.flush();
                 } catch (Exception e) {
+                    logger.info("ERROR: "+e.getMessage());
                     //databaseManagement.cacheMessageForOfflineUser(sender, receiver, messageType, messageId, body.toString(), timestamp, mediaUrl);
                 }
             }

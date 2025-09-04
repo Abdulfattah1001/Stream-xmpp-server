@@ -111,22 +111,23 @@ public class CustomHttpServer {
                     }
 
                     try{
+                        logger.info("The data sent from the backend server is: \n"+builder.toString());
                         JSONObject rObject = new JSONObject(builder.toString());
                         //logger.info("The user contacts is: "+builder.toString());
                         //logger.info("The user is: "+rObject.getString("uid"));
-                        String uid = rObject.getString("uid");
+                        String uid = rObject.getString("uid"); //The owner of the rosters
 
                         JSONArray rArray = new JSONArray(rObject.get("data").toString());
 
                         for(int i = 0; i < rArray.length(); i++){
                             JSONObject object = rArray.getJSONObject(i);
 
-                            String rosterUID = object.getString("uid");
-                            String displayName = object.getString("displayName");
-                            String savedName = object.getString("savedName");
-                            String displayStatus = object.getString("displayStatus");
-                            String contactId = object.getString("contact");
-                            String fcmToken = object.getString("fcmToken");
+                            String rosterUID = object.getString("uid");  //The user unique identity ID
+                            String displayName = object.getString("displayName"); //The user preffered name
+                            String savedName = object.getString("savedName"); //The saved name of the user 
+                            String displayStatus = object.getString("displayStatus"); //The user display status
+                            String contactId = object.getString("phoneNumber"); //The phoneNumber in E164 international format
+                            //String fcmToken = object.getString("fcmToken"); //The FCM Token of the user
 
                             management.insertItemIntoRoster(uid, contactId, displayName);
                         }

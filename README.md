@@ -135,7 +135,7 @@ CREATE TABLE offline_messages (
 ### rosters tables
 ```sql
 CREATE TABLE rosters (
-    uid VARCHAR(50) NOT NULL PRIMARY KEY,
+    uid VARCHAR(50) NOT NULL,
     contactId VARCHAR(50) NOT NULL,
     subscription ENUM('NONE', 'FROM', 'TO', 'BOTH') DEFAULT 'NONE', 
     ask ENUM('SUBSCRIBE', 'UNSUBSCRIBE') DEFAULT NULL,
@@ -143,8 +143,8 @@ CREATE TABLE rosters (
     blocked BOOLEAN DEFAULT FALSE,
     muted BOOLEAN DEFAULT FALSE,
     createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, 
-    UNIQUE KEY KEY uniqueContact (uid, contactId), INDEX uidIdx (uid), INDEX contactIdIdx (contactId));
+    PRIMARY KEY (uid, contactId),
+    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP);
 ```
 Full schema definitions are located in the /sql directory.
 

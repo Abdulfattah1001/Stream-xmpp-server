@@ -50,6 +50,7 @@ public class CustomHttpServer {
             String method = exchange.getRequestMethod();
 
             if(method.equalsIgnoreCase("POST")){
+                logger.info("CREATING USER ACCOUNT...");
                 OutputStream os = exchange.getResponseBody();
                 InputStream is = exchange.getRequestBody();
                 OutputStreamWriter writer = new OutputStreamWriter(os);
@@ -64,13 +65,16 @@ public class CustomHttpServer {
                 try{
                     JSONObject jsonObject = new JSONObject(builder.toString());
                     
-                    String contact = jsonObject.getString("contactId"); //The phone number of the user in E164 Format
+                    String contact = jsonObject.getString("phoneNumber"); //The phone number of the user in E164 Format
                     String user_id = jsonObject.getString("uid"); //The unique user ID of the user as generated on the Platform Backend Server
+                    String displayName = jsonObject.getString("displayName");
+                    String displayStatus = jsonObject.getString("displayStatus");
+                    String avatarUrl = jsonObject.getString("avatarUrl");
 
                     if(management != null){
                         
                         try {
-                            management.newUser(contact,  user_id);
+                            management.newUser(user_id, contact, displayName, displayStatus, avatarUrl);
 
                             String response = "{\"status\": success, \"message\": Account created successfully, \"data\": "+ user_id +"}";
 
@@ -195,12 +199,18 @@ public class CustomHttpServer {
         });
         
         
-        server.createContext("/api/users", new HttpHandler(){
+        /**
+         * A HTTP Request handler that handle new user account creation
+         * and also updates to the user account
+         */
+        server.createContext("/api/user", new HttpHandler(){
             @Override
             public void handle(HttpExchange exchange) throws IOException{
                 String method = exchange.getRequestMethod();
 
                 if(method.equalsIgnoreCase("POST")){
+                    logger.info("Creating and updating the user account");
+
                     OutputStream os = exchange.getResponseBody();
                     InputStream is = exchange.getRequestBody();
 
@@ -216,11 +226,12 @@ public class CustomHttpServer {
                     }
 
                     try{
+
                         JSONObject jsonObject = new JSONObject(builder.toString());
                         String uid = jsonObject.getString("uid");
                         String displayName = jsonObject.getString("displayName");
-                        String bgUrl = jsonObject.getString("bgUrl");
-                        String status = jsonObject.getString("status");
+                        String bgUrl = jsonObject.getString("avatarUrl");
+                        String status = jsonObject.getString("displayStatus");
                         String phoneNumber = jsonObject.getString("phoneNumber");
 
                         management.updateUserInfo(uid, phoneNumber, displayName, bgUrl, status);

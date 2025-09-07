@@ -9,6 +9,7 @@ import streammessenger.res.CredentialManager;
 import streammessenger.res.CustomHttpServer;
 import streammessenger.res.DatabaseManagement;
 import streammessenger.res.FirebaseSetup;
+import streammessenger.res.Server;
 import streammessenger.res.StreamServer;
 
 public class App {
@@ -44,16 +45,18 @@ public class App {
             StreamServer server = new StreamServer
                         .Builder()
                         .setAddress("0.0.0.0")
-                        .setPort(3000)
+                        .setPort(5222)
                         .setDBManagement(db).build();
+
+            Server serverV2 = new Server.Builder().setDB(db).setAddress("0.0.0.0").setPort(5222).build();
 
             CustomHttpServer httpServer = new CustomHttpServer(3001, "0.0.0.0", db);
             httpServer.start();
 
-            server.start();
+            //server.start();
+            serverV2.start();
         }catch(Exception exception){
             logger.info("Error occurred: "+exception.getMessage());
         }
     }
-
 }

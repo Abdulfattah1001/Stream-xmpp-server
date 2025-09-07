@@ -20,6 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import javax.annotation.Nullable;
@@ -51,6 +52,10 @@ public class MessageTagParser {
     }
 
     public void processMessage() throws XMLStreamException{
+        /*Session session = SessionManager.getInstance().getSession("null");
+        if(!session.isAuthenticated()){
+            //return
+        }*/
         String sender = messageStartElement.getAttributeByName(new QName("from")).getValue();
         String receiver = messageStartElement.getAttributeByName(new QName("to")).getValue();
         String messageId = messageStartElement.getAttributeByName(new QName("id")).getValue();
@@ -236,8 +241,6 @@ public class MessageTagParser {
         message.append("</stream:message>\n");
         message.append("<not-implemented />\n");
 
-        logger.info("The complete message to send is: \n"+message);
-
         if(StreamServer.connections.containsKey(receiver)){
             Socket sock = StreamServer.connections.get(receiver);
             if(sock.isConnected()){
@@ -246,8 +249,8 @@ public class MessageTagParser {
                     receiver_writer.write(String.valueOf(message));
                     receiver_writer.flush();
                 } catch (Exception e) {
-                    logger.info("ERROR: "+e.getMessage());
-                    //databaseManagement.cacheMessageForOfflineUser(sender, receiver, messageType, messageId, body.toString(), timestamp, mediaUrl);
+                    logger.log(Level.WARNING, "Error ", e);
+                    //TODO
                 }
             }
         }else{
@@ -272,23 +275,11 @@ public class MessageTagParser {
     private void sendNotification(String receiver_id, String sender_id, @Nullable String message_content, String type, String messageId){
         Firestore db = FirestoreClient.getFirestore();
         String uid = databaseManagement.getUserUID(receiver_id);
-        if(uid != null){
-            logger.info("The user uid is: "+uid);
-        }
+        
         try {
             DocumentSnapshot documentSnapshot = db.collection("users").document(uid).get().get();
             if(documentSnapshot.exists()){
-                String token = (String) documentSnapshot.get("fcm_token");
-
-                /**Message message = Message.builder()
-                        .setToken(token)
-                        .setNotification(Notification.builder()
-                                .setTitle(sender_id)
-                                .setBody(message_content)
-                                .build())
-                        .build();
-                        
-                FirebaseMessaging.getInstance().send(message);*/
+                String token = (String) documentSnapshot.get("fcmToken");
 
                 try {
                     JSONObject jsonObject = new JSONObject();
@@ -305,10 +296,6 @@ public class MessageTagParser {
                     conn.setDoOutput(true); // Needed for sending body
                     conn.setRequestProperty("Content-Type", "application/json"); // or application/x-www-form-urlencoded
 
-
-
-                    // Request body (JSON example)
-                    //String jsonInputString = "{\"name\":\"John\", \"age\":30}";
 
                     // Send request
                     try (OutputStream os = conn.getOutputStream()) {
@@ -345,60 +332,6 @@ public class MessageTagParser {
             logger.info("Error FCM: "+e.getMessage());
         } catch (Exception e) {
             logger.info("Error occurred sending FCM :"+e.getMessage());
-        }
-    }
-
-    private void sendNotificationOverHttp(String receiverId, String senderId, String content, String type, String messageId){
-        //URL url = new URL("http://192.168.160.26:3003/api/notify")
-
-        try {
-            // URL to connect to
-            URL url = new URL("http://192.168.160.26:3003/api/message/notify");
-
-            // Open connection
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("POST");
-            conn.setDoOutput(true); // Needed for sending body
-            conn.setRequestProperty("Content-Type", "application/json"); // or application/x-www-form-urlencoded
-
-            JSONObject jsonObject = new JSONObject();
-            jsonObject.put("senderId", senderId);
-            jsonObject.put("content", content);
-            jsonObject.put("messageId", messageId);
-            jsonObject.put("receiverId", receiverId);
-
-            // Request body (JSON example)
-            //String jsonInputString = "{\"name\":\"John\", \"age\":30}";
-
-            // Send request
-            try (OutputStream os = conn.getOutputStream()) {
-                //byte[] input = jsonInputString.getBytes(StandardCharsets.UTF_8);
-                //os.write(input, 0, input.length);
-                OutputStreamWriter w = new OutputStreamWriter(os);
-                w.write(jsonObject.toString());
-                w.flush();
-            }
-
-            // Read response
-            int responseCode = conn.getResponseCode();
-            System.out.println("Response Code: " + responseCode);
-            if (responseCode == HttpURLConnection.HTTP_OK || responseCode == HttpURLConnection.HTTP_CREATED) {
-                try (BufferedReader in = new BufferedReader(
-                        new InputStreamReader(conn.getInputStream()))) {
-                    String inputLine;
-                    StringBuilder response = new StringBuilder();
-                    while ((inputLine = in.readLine()) != null) {
-                        response.append(inputLine);
-                    }
-                    System.out.println("Response: " + response.toString());
-                }
-            } else {
-                System.out.println("POST request failed.");
-            }
-
-
-        } catch (Exception e) {
-            e.printStackTrace();
         }
     }
 

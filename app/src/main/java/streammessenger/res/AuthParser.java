@@ -32,7 +32,6 @@ import io.jsonwebtoken.security.Keys;
 ///This class is used to authenticate the user
 
 public class AuthParser {
-    private static final org.slf4j.Logger log = LoggerFactory.getLogger(AuthParser.class);
     private final XMLEventReader reader;
     private final StartElement authStartElement;
     private final static Logger logger = Logger.getLogger("authentication");
@@ -95,11 +94,9 @@ public class AuthParser {
                     //TODO: Authenticating the user should be delegated to Firebase API [Firebase Authentication]
                     
                     @SuppressWarnings("unused")
-                    String tagName = authStartElement.getName().getLocalPart();
-                    @SuppressWarnings("unused")
                     String namespace = authStartElement.getName().getNamespaceURI();
 
-                    if(event.isCharacters() && event.asCharacters().isWhiteSpace()) event = reader.nextEvent();
+                    if(event.isCharacters() && event.asCharacters().isWhiteSpace());
 
                     String contact1 = event.asCharacters().getData();
                     contact1 = new String(Base64.getDecoder().decode(contact1));

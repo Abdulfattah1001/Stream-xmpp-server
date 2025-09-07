@@ -66,6 +66,7 @@ public class DatabaseManagement {
      * @param contactId The phone_number of the user
      * @param userId The unique user identity of the user
      * @throws SQLException
+     * @Deprecated
      */
     public void newUser(String contactId, @Nonnull String userId) throws SQLException {
         if(isUserExists(contactId)) return; //If the user exists already on the database
@@ -78,6 +79,34 @@ public class DatabaseManagement {
             @SuppressWarnings("unused")
             int result = preparedStatement.executeUpdate();
         }
+    }
+
+
+    /**
+     * Insert new user into the rosters table
+     * and updates the displayName, displayStatus on Conflict
+     * @param uid
+     * @param phoneNumber
+     * @param displayName
+     * @param displayStatus
+     * @param avatarUrl
+     * @throws SQLException
+     */
+    public void newUser(String uid, String phoneNumber, String displayName, String displayStatus, String avatarUrl) throws SQLException{
+
+        String query = "INSERT INTO users (uid, contactId, displayName, avatarUrl, status) VALUES(?,?,?,?,?) ON DUPLICATE KEY UPDATE displayName = VALUES(displayName), status = VALUES(status)";
+
+        PreparedStatement pre = connection.prepareStatement(query);
+        pre.setString(1, uid);
+        pre.setString(2, phoneNumber);
+        pre.setString(3, displayName);
+        pre.setString(4, avatarUrl);
+        pre.setString(5, displayStatus);
+
+        int result = pre.executeUpdate();
+
+        logger.info("User account created successfully: "+result);
+        
     }
 
     public void createUserAccount(String uid, String jid){

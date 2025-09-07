@@ -48,7 +48,7 @@ public class StreamServer {
             try{
                 this.databaseManagement.connects();
             }catch(Exception exception){
-                logger.info(() -> "Error occurred: "+exception.getMessage());
+                throw new IllegalStateException("Database must be opened before access");
             }
         }
     }
@@ -94,10 +94,11 @@ public class StreamServer {
      * Connection at the same time
      */
     class ConnectionHandler implements Runnable {
-        private final Socket connection;
+        private final Socket connection; //The client socket connection instance
         private boolean isConnectionSecure = false; //Is user connection to the server is encrypted
         private boolean isUserAuthenticated = false; //Is the user authenticated
         private int streamRestarterCounter = 0; //A variable that track how many time the stream has been restarted
+        
 
         private String user_contact = null;
         
@@ -114,7 +115,9 @@ public class StreamServer {
         private String streamHeader(){
             return new String("<?xml version='1.0'?>\n"+
                               "<stream:stream\n"+
+                                "version=''\n"+
                                 "xmlns='jabber:server'\n"+
+                                "id=''\n"+
                                 "xmlns:stream='http://etherx.jabber.org/streams'>\n");
         }
 
@@ -191,6 +194,7 @@ public class StreamServer {
             try {
                 XMLInputFactory factory = XMLInputFactory.newInstance(); //Get's the XMLInputFactory
                 XMLEventReader xmlEventReader = factory.createXMLEventReader(is); //Creates an XMLEventReader
+
                 while(xmlEventReader.hasNext()){ //Process the stream while the reader has next data
 
                     XMLEvent event = xmlEventReader.nextEvent(); //Gets the next Event
@@ -255,11 +259,13 @@ public class StreamServer {
                                 break;
 
                             case "starttls":
+                                logger.info("STARTTLS called");
                                 StartTLSParser startTLSParser = new StartTLSParser(connection, xmlEventReader, startElement);
                                 startTLSParser.parseStartTls();
                                 break;
                                 
                             case "auth":
+                                logger.info("auth parser");
                                 AuthParser authParser = new AuthParser(xmlEventReader, startElement, databaseManagement,connection, this);
                                 authParser.parseAuthXMLStream();
                                 break;
@@ -290,23 +296,15 @@ public class StreamServer {
                     }
                 }
             } catch (XMLStreamException exception) {
-
-                //Test if the user is still connected because this error is also thrown when the connection closes abrubtly
-                if(!connection.isConnected()){
+                if(connection.isConnected()){
                     try{
-                        connections.remove(user_contact); //Remove the user socket connection from the connections
-                        connection.close(); //Closes the user socket connection
-                        //TODO: The presence database can now be updated
-                    }catch(IOException e){
-                        logger.info("Error occurred tearing down the user connection on disconnect: "+e.getMessage());
-                    }
+                        connection.close();
+                        connections.remove(user_contact);
+                        //TODO: The user session should also be cleaned up
+                    }catch(IOException ignore){}
                 }else{
-                    logger.info("The user really sent a malformed xml tag: "+exception.getMessage());
 
-                    //Test if the malformed tag happened because of ungraceful diconnect
-                    if(!connection.isConnected()){
-                        logger.info("Closing the connection and holding the user session");
-                    }
+                    connections.remove(user_contact);
                 }
             }
         }

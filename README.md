@@ -91,6 +91,8 @@ CREATE TABLE users (
     displayName VARCHAR(255) NULL,
     email VARCHAR(100) DEFAULT NULL,
     avatarUrl VARCHAR(512) DEFAULT NULL,
+    status VARCHAR(125) DEFAULT NULL,
+    fcmToken VARCHAR(256) DEFAULT NULL,
     isAnonymous BOOLEAN DEFAULT FALSE,
     identityKey TEXT,
     deviceId VARCHAR(100) DEFAULT NULL,
@@ -119,16 +121,15 @@ CREATE TABLE offline_messages (
     messageId VARCHAR(255) PRIMARY KEY NOT NULL,
     receipientId VARCHAR(255) NOT NULL,
     senderId VARCHAR(255) NOT NULL,
-    messageType ENUM('CHAT', 'MEDIA' 'CALL') DEFAULT 'CHAT',
+    messageType ENUM('CHAT', 'MEDIA', 'CALL') DEFAULT 'CHAT',
     encryptedPayload TEXT NULL,
     mediaUrl VARCHAR(512) DEFAULT NULL,
     timestamp VARCHAR(50) NOT NULL,
     expiresAt TIMESTAMP DEFAULT NULL,
     delivered BOOLEAN DEFAULT FALSE,
     createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX recipientIdx(recipientId), 
-    INDEX deliveredIdx(delivered)
-    );
+    INDEX recipientIdx(receipientId), 
+    INDEX deliveredIdx(delivered));
 
 ```
 

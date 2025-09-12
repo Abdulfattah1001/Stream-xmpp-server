@@ -22,7 +22,7 @@ public class Server {
     private final String address;
     private static final SecureRandom secureRandom = new SecureRandom();
     private final static Logger logger = Logger.getLogger("Server");
-    public volatile static ConcurrentHashMap<String, Session> connections = new ConcurrentHashMap<>();
+    public volatile static ConcurrentHashMap<String, Session> connections = new ConcurrentHashMap<String, Session>();
     private final DatabaseManagement db;
 
     private Server(Builder builder){
@@ -74,7 +74,7 @@ public class Server {
     private class Connectionhandler implements Runnable{
         private final Socket socket;
         private SessionState sessionState = SessionState.INITIAL;
-        private final String id; //The id that uniquelt identifies the session
+        private final String id; //The id that uniquely identifies the session
 
 
         public Connectionhandler(Socket soc, String id){
@@ -126,6 +126,8 @@ public class Server {
                                 break;     
 
                             case "message":
+                                MessageTagParser message = new MessageTagParser();
+                                message.start(sE, reader);
                                 break;
                                 
                             case "presence":
@@ -145,14 +147,29 @@ public class Server {
                 }
             }catch(Exception exception){
                 if(exception instanceof IOException){
-                    logger.warning("Error IOException: "+exception.getMessage());
+                    logger.warning("Closing the client connection due to IOException");
+                    if(socket.isClosed() || !socket.isConnected()){
+                        connections.remove(session.getContactId()); //Removing the session instance from the ConcurrentHashMap
+                        try {
+                            session.getSocket().close();
+                            session = null; //Set it up for Garbage collections
+                        } catch (IOException e) {}
+                    }
                 }
                 if(exception instanceof XMLStreamException){
-                    logger.warning("Error StreamParse: "+exception.getMessage());
+                    logger.warning("Closing the client connection due to XML error");
+                    Socket socket =  session.getSocket();
+                    if(socket.isClosed() || !socket.isConnected()){
+                        try{
+                            socket.close();
+                            Server.connections.remove(session.getContactId());
+                            session.setSocket(null);
+                            session = null;
+                        }catch(IOException ignore){}
+                    }
                 }
             }
         }
-
     }
     
 

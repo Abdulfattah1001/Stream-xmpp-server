@@ -10,6 +10,7 @@ public class Session {
     private String sessionId = null;
     private String authenticationToken = null;
     private String contactId = null;
+    private String uid = null;
     private boolean isAuthenticated = false;
     private Socket socket = null; //The Client socket instance
     private SessionState sessionState = SessionState.INITIAL;
@@ -30,6 +31,14 @@ public class Session {
 
     public String getContactId(){
         return contactId;
+    }
+
+    public void setUid(String uid){
+        this.uid = uid;
+    }
+
+    public String getUid(){
+        return this.uid;
     }
 
     public boolean isAuthenticated(){

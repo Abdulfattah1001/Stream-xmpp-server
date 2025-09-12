@@ -8,8 +8,10 @@ import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.firebase.messaging.FirebaseMessagingException;
 import com.google.firebase.messaging.Message;
 import com.google.firebase.messaging.Notification;
+import com.google.firestore.v1.Write;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
@@ -30,19 +32,21 @@ import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.events.Attribute;
 import javax.xml.stream.events.StartElement;
 import javax.xml.stream.events.XMLEvent;
-
-import org.apache.hc.core5.concurrent.FutureCallback;
 import org.json.JSONObject;
 
 
 
 public class MessageTagParser {
     @SuppressWarnings("unused")
-    private final Socket socket;
-    private final StartElement messageStartElement;
-    private final XMLEventReader reader;
-    private final Logger logger = Logger.getLogger("messageLogger");
-    private final DatabaseManagement databaseManagement;
+    private Socket socket;
+    private StartElement messageStartElement;
+    private XMLEventReader reader;
+    private Logger logger = Logger.getLogger("messageLogger");
+    private DatabaseManagement databaseManagement;
+
+    public MessageTagParser(){
+        databaseManagement = DatabaseManagement.getInstance(CredentialManager.getPassword(), CredentialManager.getDatabaseUsername(), CredentialManager.getDatabaseName());
+    }
 
     public MessageTagParser(Socket conn, StartElement startElement, XMLEventReader reader){
         this.socket = conn;
@@ -51,11 +55,210 @@ public class MessageTagParser {
         databaseManagement = DatabaseManagement.getInstance(CredentialManager.getPassword(), CredentialManager.getDatabaseUsername(), CredentialManager.getDatabaseName());
     }
 
+    public void start(StartElement startElement, XMLEventReader reader) throws IOException, XMLStreamException{
+        String from = startElement.getAttributeByName(new QName("from")).getValue(); //The sender Contact
+        String to = startElement.getAttributeByName(new QName("to")).getValue(); //The recepient Contact
+        String messageId = startElement.getAttributeByName(new QName("id")).getValue(); //The message ID
+        Attribute typeAttr = startElement.getAttributeByName(new QName("type"));
+        String type = typeAttr != null ? typeAttr.getValue() : null;
+        String url = null;
+        String content = null;
+        Session session = SessionManager.getInstance().getSession(from);
+        boolean isReceived = false;
+
+        logger.info("The receiver id is: "+to);
+        logger.info("The sender is: "+from);
+        
+
+        if(!session.isAuthenticated() || session.getSessionState() == SessionState.INITIAL){
+
+            OutputStreamWriter writer = new OutputStreamWriter(session.getSocket().getOutputStream());
+
+            writer.write("<stream:failure xmlns='urn:ietf:params:ns:xmpp-auth'>\n"
+            +"<not-authorized> Not Authenticated </not-authorized>\n"+
+            "</stream:failure>\n");
+
+            writer.write("</stream:stream>");
+
+            writer.flush();
+
+            session.getSocket().close();
+
+            session = null;
+            
+            return;
+        }
+
+        StringBuilder message = new StringBuilder();
+        message.append("<stream:message\n");
+        message.append("from='"+ from +"'\n");
+        message.append("to='"+ to +"'\n");
+        if(typeAttr != null){message.append("type='"+typeAttr.getValue()+"'");}
+        message.append("id='"+ messageId + "'>\n");
+
+        while(reader.hasNext()){
+            XMLEvent event = reader.nextEvent();
+            
+            if(event.isCharacters() && event.asCharacters().isWhiteSpace()) continue;
+
+            if(event.isStartElement()){
+                String tagName = event.asStartElement().getName().getLocalPart();
+
+                switch(tagName){
+                    case "body": //The main text content of the message
+                        StringBuilder body = new StringBuilder();
+                        content = new String();
+                        body.append("<body>");
+                        while(reader.hasNext()){
+                            event = reader.nextEvent();
+                            if(event.isCharacters() && event.asCharacters().isWhiteSpace()) continue;
+
+                            if(event.isCharacters()){
+                                content += event.asCharacters().getData();
+                                body.append(event.asCharacters().getData());
+                            }
+
+                            if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("body")){
+                                body.append(("</body>"));
+                                message.append(body.toString());
+                                break;
+                            }
+                        }
+                        break;
+                    case "timestamp": //The timestamp of the message
+                        StringBuilder timestampBuiler = new StringBuilder();
+                        timestampBuiler.append("<timestamp>");
+                        while(reader.hasNext()){
+                            event = reader.nextEvent();
+                            if(event.isCharacters() && event.asCharacters().isWhiteSpace()) continue;
+
+                            if(event.isCharacters()){
+                                timestampBuiler.append(event.asCharacters().getData());
+                            }
+
+                            if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("timestamp")){
+                                timestampBuiler.append("</timestamp>\n");
+                                message.append(timestampBuiler.toString());
+                                break;
+                            }
+                        }
+                        break;
+                    case "disappear": //The disappear message
+                        break;
+                    case "audio": //The audio url of the message
+                        break;
+                    case "video": //The video url of the message
+                        break;
+                    case "received": //The message has been received
+                        message.append("<received xmlns='urn:xmpp:receipts'/>\n");
+                        isReceived = true;
+                        break;
+                    case "request": // Requesting for received receipt
+                        message.append("<request xmlns='urn:xmpp:receipts'/>\n");
+                        break;
+                    default:
+                        break;                               
+                }
+            }
+        
+            if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("message")){
+                break;
+            }
+        }
+
+        if(!databaseManagement.isFriends(session.getUid(), to)){
+            StreamUser user = databaseManagement.getUserByContactId(from);
+
+            if(user != null){
+                message.append("<sender-meta xmlns='urn:xmpp:sender:meta:0'>\n");
+                message.append("<display-name>");
+                message.append(user.getDisplayName());
+                message.append("</display-name>\n");
+
+                message.append("<phone-number>");
+                message.append(from);
+                message.append("</phone-number>\n");
+
+                message.append("<uid>");
+                message.append(user.getUid());
+                message.append("</uid>\n");
+
+                message.append("<avatar>");
+                message.append(user.getAvatarUrl());
+                message.append("</avatar>");
+
+                message.append("<status>");
+                message.append(user.getStatus());
+                message.append("</status>");
+
+                message.append("<sender-meta>");
+            }
+        }
+
+
+        message.append("</stream:message>\n");
+        message.append("<not-implemented />\n");
+        
+
+        if(StreamServer.connections.contains(to)){
+            Session toSession = SessionManager.getInstance().getSession(to);
+            
+
+            Socket socket = toSession.getSocket();
+
+            OutputStreamWriter writer = new OutputStreamWriter(socket.getOutputStream());
+            writer.write(String.valueOf(message));
+            writer.flush();
+
+        }else{
+            //TODO: Cache the message for when the receiver comes online
+        }
+
+        /**
+         * Notifying the sender that the message has been received
+         */
+        if(!isReceived){
+            logger.info("Sending a server received receipts");
+            OutputStreamWriter writer = new OutputStreamWriter(session.getSocket().getOutputStream());
+            writer.write("<stream:message from='"+ from +"' to='"+to+"' id='"+messageId+"'> <received xmlns='urn:xmpp:receipts:server'/> </stream:message>");
+            writer.flush();
+        }else{
+            logger.info("Sending...");
+            if(to.startsWith("+234")){
+                if(Server.connections.contains(to)){
+                    logger.info("Routing the receipts...");
+                    Socket sock = Server.connections.get(to).getSocket();
+                    OutputStreamWriter writer = new OutputStreamWriter(sock.getOutputStream());
+                    writer.write("<stream:message from='"+ from +"' to='"+to+"' id='"+messageId+"'> <received xmlns='urn:xmpp:receipts:server'/> </stream:message>");
+                    writer.flush();
+                }
+            }else{
+                logger.info("Getting the contact of the receiver...");
+                String contact = databaseManagement.getContactById(to);
+                logger.info("The receiver contacts is:::"+contact);
+                if(Server.connections.containsKey(contact)){
+                    logger.info("Routing the receipts...");
+                    Socket sock = Server.connections.get(contact).getSocket();
+                    OutputStreamWriter writer = new OutputStreamWriter(sock.getOutputStream());
+                    writer.write("<stream:message from='"+ from +"' to='"+to+"' id='"+messageId+"'> <received xmlns='urn:xmpp:receipts'/> </stream:message>");
+                    writer.flush();
+                    logger.info("Received receipts sent");
+                }else{
+                    logger.info("THe receier is offline");
+                    Socket sock = session.getSocket();
+                    OutputStreamWriter writer = new OutputStreamWriter(sock.getOutputStream());
+                    writer.write("<stream:message from='"+ from +"' to='"+to+"' id='"+messageId+"'> <received xmlns='urn:xmpp:receipts:server'/> </stream:message>");
+                    writer.flush();
+                }
+            }
+        }
+
+        if(typeAttr != null){sendNotificationLatest(from, to, messageId, type, content, url);} //Only sends notification if the message is not a receipts
+        //sendNotificationLatest(from, to, messageId, type, content, url);
+    }
+    
+
     public void processMessage() throws XMLStreamException{
-        /*Session session = SessionManager.getInstance().getSession("null");
-        if(!session.isAuthenticated()){
-            //return
-        }*/
         String sender = messageStartElement.getAttributeByName(new QName("from")).getValue();
         String receiver = messageStartElement.getAttributeByName(new QName("to")).getValue();
         String messageId = messageStartElement.getAttributeByName(new QName("id")).getValue();
@@ -308,7 +511,6 @@ public class MessageTagParser {
 
                     // Read response
                     int responseCode = conn.getResponseCode();
-                    System.out.println("Response Code: " + responseCode);
                     if (responseCode == HttpURLConnection.HTTP_OK || responseCode == HttpURLConnection.HTTP_CREATED) {
                         try (BufferedReader in = new BufferedReader(
                                 new InputStreamReader(conn.getInputStream()))) {
@@ -332,6 +534,68 @@ public class MessageTagParser {
             logger.info("Error FCM: "+e.getMessage());
         } catch (Exception e) {
             logger.info("Error occurred sending FCM :"+e.getMessage());
+        }
+    }
+
+    /**
+     * Notify the receiver of the message
+     * @param receiver_id The receiver id of the message
+     * @param sender_id The sender id of the message
+     * @param message_content The actual message content to sent it might be null for media type
+     * //TODO: Instead of hitting the firestore to get the receiver FCM TOKEN, it can be saved on the XMPP 
+     * //Server instead.
+     */
+    private void sendNotificationLatest(String from, String to, String messageId, String type, String messageContent, String url){
+        Session fromSession = SessionManager.getInstance().getSession(from);
+        String uid = databaseManagement.getUserUID(to);
+
+        try{
+            JSONObject notificationObject = new JSONObject();
+            notificationObject.put("from", fromSession.getUid());
+            notificationObject.put("to", uid);
+            notificationObject.put("content", messageContent);
+            notificationObject.put("messageId", messageId);
+
+
+            if(type != null){
+                notificationObject.put("type", type);
+            }
+
+            if(url != null){
+                notificationObject.put("url", url);
+            }
+
+            URL url1 = new URL("http://192.168.196.40:3003/api/v2/notification");
+
+            HttpURLConnection connection = (HttpURLConnection) url1.openConnection();
+            connection.setRequestMethod("POST");
+            connection.setRequestProperty("Content-Type", "application/json");
+            connection.setDoOutput(true);
+
+            OutputStream os = connection.getOutputStream();
+            OutputStreamWriter writer = new OutputStreamWriter(os);
+            writer.write(notificationObject.toString());
+            writer.flush();
+            
+
+            int responseCode = connection.getResponseCode();
+            
+            if(responseCode == HttpURLConnection.HTTP_OK || responseCode == HttpURLConnection.HTTP_CREATED){
+                try (BufferedReader in = new BufferedReader(
+                    new InputStreamReader(connection.getInputStream()))) {
+                    String inputLine;
+                    StringBuilder response = new StringBuilder();
+                    while ((inputLine = in.readLine()) != null) {
+                        response.append(inputLine);
+                        }
+                    System.out.println("Response: " + response.toString());
+                }
+            }else{
+                logger.info("Post request failed");
+            }
+
+        }catch(Exception exception){
+            logger.info("Error occurred: "+exception.getMessage());
         }
     }
 

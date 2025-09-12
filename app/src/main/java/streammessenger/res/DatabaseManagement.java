@@ -281,6 +281,11 @@ public class DatabaseManagement {
         return offline_messages;
     }
 
+    /**
+     * Returns the contactId of the user
+     * @param id The user uid
+     * @return A String representation of the user contact
+     */
     public String getContactById(String id){
         try{
             String statement = "SELECT contactId FROM users WHERE uid = ?";
@@ -458,8 +463,8 @@ public class DatabaseManagement {
 
     /**
      * Query the roster for a user
-     * @param uid The owner of roster(receiver)
-     * @param contactId The peer user (sender)
+     * @param uid The owner of roster(receiver) user uid
+     * @param contactId The peer user (sender) phone number
      * @return A boolean value representing the result of the query
      */
     public boolean isFriends(@Nonnull String uid, @Nonnull String contactId){

@@ -251,6 +251,9 @@ public class DatabaseManagement {
     }
 
 
+    public void offlineMessages(String from, String to, String type, String body, String url, String messageId, String timestamp){}
+
+    public void removeMessageFromCache(String messageId){}
 
     public List<HashMap<String, String>> check_for_offline_message(String user_id){
         List<HashMap<String, String>> offline_messages = new ArrayList<>();

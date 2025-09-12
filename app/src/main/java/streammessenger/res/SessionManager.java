@@ -28,14 +28,14 @@ public class SessionManager {
     /**
      * Gets and return a session associated with the session Id 
      * passed
-     * @param sessionId The sessionId of the session to gets
+     * @param jid The sessionId of the session to gets
      * @return Session
      */
-    public Session getSession(String sessionId){
-        if(Server.connections.contains(sessionId)){
+    public Session getSession(String jid){
+        if(Server.connections.containsKey(jid)){
             System.out.println("The Session is present....");
         }
-        return Server.connections.get(sessionId);
+        return Server.connections.get(jid);
     }
 
 

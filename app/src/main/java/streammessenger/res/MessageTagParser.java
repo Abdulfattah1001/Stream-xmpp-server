@@ -64,11 +64,8 @@ public class MessageTagParser {
         String url = null;
         String content = null;
         Session session = SessionManager.getInstance().getSession(from);
-        boolean isReceived = false;
 
-        logger.info("The receiver id is: "+to);
-        logger.info("The sender is: "+from);
-        
+        boolean isReceived = false;
 
         if(!session.isAuthenticated() || session.getSessionState() == SessionState.INITIAL){
 
@@ -143,17 +140,17 @@ public class MessageTagParser {
                             }
                         }
                         break;
-                    case "disappear": //The disappear message
+                    case "disappear":
                         break;
-                    case "audio": //The audio url of the message
+                    case "audio":
                         break;
-                    case "video": //The video url of the message
+                    case "video":
                         break;
-                    case "received": //The message has been received
+                    case "received":
                         message.append("<received xmlns='urn:xmpp:receipts'/>\n");
                         isReceived = true;
                         break;
-                    case "request": // Requesting for received receipt
+                    case "request":
                         message.append("<request xmlns='urn:xmpp:receipts'/>\n");
                         break;
                     default:
@@ -195,66 +192,67 @@ public class MessageTagParser {
             }
         }
 
-
         message.append("</stream:message>\n");
-        message.append("<not-implemented />\n");
-        
+        message.append("<not-implemented />\n");        
 
-        if(StreamServer.connections.contains(to)){
-            Session toSession = SessionManager.getInstance().getSession(to);
-            
-
-            Socket socket = toSession.getSocket();
-
-            OutputStreamWriter writer = new OutputStreamWriter(socket.getOutputStream());
-            writer.write(String.valueOf(message));
-            writer.flush();
-
-        }else{
-            //TODO: Cache the message for when the receiver comes online
-        }
-
+        //If the receiver is online, routes the message to the them directly
         /**
-         * Notifying the sender that the message has been received
+         * The message will have to be cache locally regardless until the 
+         * receiver acknowledge that it has received it
+         * which only happends when the receiver sends back
+         * a <received /> tag element that it has received the 
+         * message, so the server would have to remove the message
+         * from the local storage
          */
+
         if(!isReceived){
+            logger.info("Processing a complete message tag...");
             logger.info("Sending a server received receipts");
-            OutputStreamWriter writer = new OutputStreamWriter(session.getSocket().getOutputStream());
+            OutputStreamWriter writer = new OutputStreamWriter(session.getSocket().getOutputStream()); //Getting the sender connection session
             writer.write("<stream:message from='"+ from +"' to='"+to+"' id='"+messageId+"'> <received xmlns='urn:xmpp:receipts:server'/> </stream:message>");
             writer.flush();
+
+            //TODO: Cache the message locally
+
+            if(Server.connections.containsKey(to)){
+                 Session toSession = SessionManager.getInstance().getSession(to);
+        
+                Socket socket = toSession.getSocket();
+
+                OutputStreamWriter recWriter = new OutputStreamWriter(socket.getOutputStream());
+                recWriter.write(String.valueOf(message));
+                recWriter.flush();
+            }
+
+            //Sends a notification
+            sendNotificationLatest(from, to, messageId, type, content, url);
         }else{
-            logger.info("Sending...");
-            if(to.startsWith("+234")){
-                if(Server.connections.contains(to)){
-                    logger.info("Routing the receipts...");
-                    Socket sock = Server.connections.get(to).getSocket();
-                    OutputStreamWriter writer = new OutputStreamWriter(sock.getOutputStream());
-                    writer.write("<stream:message from='"+ from +"' to='"+to+"' id='"+messageId+"'> <received xmlns='urn:xmpp:receipts:server'/> </stream:message>");
-                    writer.flush();
-                }
+            /**
+             * Note that:
+             *  Here also, if the original sender of the message is not online
+             *  then the received receipts will also have to be cache locally
+             *  till the user reconnects
+             */
+            logger.info("Processing a received receipt message...");
+            
+            if(!(to.startsWith("+234"))) to = databaseManagement.getContactById(to);
+
+            if(Server.connections.containsKey(to)){
+                logger.info("Notifying the original sender that the receiver has received the message");
+
+                Session rec = SessionManager.getInstance().getSession(to);
+                OutputStreamWriter writer = new OutputStreamWriter(rec.getSocket().getOutputStream());
+                //writer.write(String.valueOf(message));
+                writer.write("<stream:message from='"+ from +"' to='"+to+"' id='"+messageId+"'> <received xmlns='urn:xmpp:receipts'/> </stream:message>");
+                writer.flush();
+
+                databaseManagement.removeMessageFromCache(messageId);
             }else{
-                logger.info("Getting the contact of the receiver...");
-                String contact = databaseManagement.getContactById(to);
-                logger.info("The receiver contacts is:::"+contact);
-                if(Server.connections.containsKey(contact)){
-                    logger.info("Routing the receipts...");
-                    Socket sock = Server.connections.get(contact).getSocket();
-                    OutputStreamWriter writer = new OutputStreamWriter(sock.getOutputStream());
-                    writer.write("<stream:message from='"+ from +"' to='"+to+"' id='"+messageId+"'> <received xmlns='urn:xmpp:receipts'/> </stream:message>");
-                    writer.flush();
-                    logger.info("Received receipts sent");
-                }else{
-                    logger.info("THe receier is offline");
-                    Socket sock = session.getSocket();
-                    OutputStreamWriter writer = new OutputStreamWriter(sock.getOutputStream());
-                    writer.write("<stream:message from='"+ from +"' to='"+to+"' id='"+messageId+"'> <received xmlns='urn:xmpp:receipts:server'/> </stream:message>");
-                    writer.flush();
-                }
+                //TODO: Cache the receipts locally for the user to come online
             }
         }
 
-        if(typeAttr != null){sendNotificationLatest(from, to, messageId, type, content, url);} //Only sends notification if the message is not a receipts
-        //sendNotificationLatest(from, to, messageId, type, content, url);
+        isReceived = false; //Sets it back to default at the end of the message processing
     }
     
 

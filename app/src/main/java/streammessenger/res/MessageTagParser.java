@@ -2,13 +2,7 @@ package streammessenger.res;
 
 import com.google.cloud.firestore.DocumentSnapshot;
 import com.google.cloud.firestore.Firestore;
-import com.google.common.util.concurrent.Futures;
 import com.google.firebase.cloud.FirestoreClient;
-import com.google.firebase.messaging.FirebaseMessaging;
-import com.google.firebase.messaging.FirebaseMessagingException;
-import com.google.firebase.messaging.Message;
-import com.google.firebase.messaging.Notification;
-import com.google.firestore.v1.Write;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -18,10 +12,7 @@ import java.io.OutputStreamWriter;
 import java.net.HttpURLConnection;
 import java.net.Socket;
 import java.net.URL;
-import java.nio.charset.StandardCharsets;
-import java.util.Map;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executors;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -56,15 +47,16 @@ public class MessageTagParser {
     }
 
     public void start(StartElement startElement, XMLEventReader reader) throws IOException{
-        logger.info("Message encounter");
-        String from = startElement.getAttributeByName(new QName("from")).getValue(); //The sender Contact
-        String to = startElement.getAttributeByName(new QName("to")).getValue(); //The recepient Contact
-        String messageId = startElement.getAttributeByName(new QName("id")).getValue(); //The message ID
+        String from = startElement.getAttributeByName(new QName("from")).getValue();
+        String to = startElement.getAttributeByName(new QName("to")).getValue();
+        String messageId = startElement.getAttributeByName(new QName("id")).getValue();
         Attribute typeAttr = startElement.getAttributeByName(new QName("type"));
+
         String type = typeAttr != null ? typeAttr.getValue() : null;
         String url = null;
         String content = null;
         String timestamp = null;
+
         Session session = SessionManager.getInstance().getSession(from);
 
         boolean isReceived = false;
@@ -89,6 +81,7 @@ public class MessageTagParser {
         }
 
         StringBuilder message = new StringBuilder();
+
         message.append("<stream:message\n");
         message.append("from='"+ from +"'\n");
         message.append("to='"+ to +"'\n");
@@ -105,10 +98,11 @@ public class MessageTagParser {
                 String tagName = event.asStartElement().getName().getLocalPart();
 
                 switch(tagName){
-                    case "body": //The main text content of the message
+                    case "body":
                         StringBuilder body = new StringBuilder();
                         content = new String();
                         body.append("<body>");
+
                         while(reader.hasNext()){
                             event = reader.nextEvent();
                             if(event.isCharacters() && event.asCharacters().isWhiteSpace()) continue;
@@ -125,7 +119,8 @@ public class MessageTagParser {
                             }
                         }
                         break;
-                    case "timestamp": //The timestamp of the message
+
+                    case "timestamp":
                         StringBuilder timestampBuiler = new StringBuilder();
                         timestampBuiler.append("<timestamp>");
                         timestamp = new String();
@@ -141,22 +136,62 @@ public class MessageTagParser {
 
                             if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("timestamp")){
                                 timestampBuiler.append("</timestamp>\n");
-                                
-                                message.append(timestampBuiler.toString());
+                                message.append(String.valueOf(timestampBuiler));
                                 break;
                             }
                         }
                         break;
+
                     case "disappear":
                         break;
+
                     case "audio":
                         break;
+
                     case "video":
                         break;
+
                     case "received":
-                        message.append("<received xmlns='urn:xmpp:receipts'/>\n");
-                        isReceived = true;
+                        String namespace = event.asStartElement().getName().getNamespaceURI();
+
+                        /*if(namespace.equals("urn:xmpp:receipts:client")){
+                            logger.info("The client has received the receipts deleting from cache now..."+messageId);
+                            databaseManagement.deleteReceivedReceiptsFromCache(messageId);
+                        }else{
+                            message.append("<received xmlns='urn:xmpp:receipts'/>\n");
+                            isReceived = true;
+                        }*/
+
+                        switch (namespace) {
+                            /**
+                            * The client sending back a <received xmlns='urn:xmpp:receipts:client'/>
+                            * that it has received the receipt that the intending receiver 
+                            * has received the message, so the server can treat it or remove it
+                            * from the local cache as being treated
+                            */
+                            case "urn:xmpp:receipts:client":
+                                logger.info("Removing the receipts from cache ...");
+                                databaseManagement.deleteReceivedReceiptsFromCache(messageId);
+                                break;
+
+                            /**
+                            * The receiver sending back an acknowledgement as a response to 
+                            * <request xmlns='urn:xmpp:receipts' /> that it has received
+                            * and that the sender can be notified of it
+                            *
+                            * The isReceived = true is used to mark the present processing message tag
+                            * as a receipts and it should not be treated as a complete message tag
+                            */
+                            case "urn:xmpp:receipts":
+                                message.append("<received xmlns='urn:xmpp:receipts'/>");
+                                isReceived = true;
+                                break;    
+                        
+                            default:
+                                break;
+                        }
                         break;
+
                     case "request":
                         message.append("<request xmlns='urn:xmpp:receipts'/>\n");
                         break;
@@ -165,13 +200,17 @@ public class MessageTagParser {
                 }
             }
         
-            if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("message")){
-                break;
-            }
+            if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("message")) break; // Breaking out of the outer loop
         }
+
         }catch(XMLStreamException exception){
             logger.info("Error occurred message: "+exception.getMessage());
         }
+
+        /**
+        * Checking if the sender is in the receiver rosters
+        * If not, include the user meta-data into the message tag
+        */
         if(!databaseManagement.isFriends(session.getUid(), to)){
             StreamUser user = databaseManagement.getUserByContactId(from);
 
@@ -203,29 +242,34 @@ public class MessageTagParser {
         }
 
         message.append("</stream:message>\n");
-        message.append("<not-implemented />\n");     
-        
-        logger.info(String.valueOf(message));
 
-        //If the receiver is online, routes the message to the them directly
+        message.append("<not-implemented />\n"); //This should not be processed on the client side as it's used to flush out the complete <stream:message></stream:message>
+        
         /**
          * The message will have to be cache locally regardless until the 
          * receiver acknowledge that it has received it
          * which only happends when the receiver sends back
          * a <received /> tag element that it has received the 
-         * message, so the server would have to remove the message
-         * from the local storage
+         * message, so the server would be able to remove the message
+         * from the local storage or cache
          */
 
         if(!isReceived){
-            logger.info("Processing a complete message tag...");
-            logger.info("Sending a server received receipts");
-            OutputStreamWriter writer = new OutputStreamWriter(session.getSocket().getOutputStream()); //Getting the sender connection session
-            writer.write("<stream:message from='"+ from +"' to='"+to+"' id='"+messageId+"'> <received xmlns='urn:xmpp:receipts:server'/> </stream:message>");
+            
+            /**
+            * Sending back an acknowledgement to the sender 
+            * that the message is now in the hands of the server
+            */
+            OutputStreamWriter writer = new OutputStreamWriter(session.getSocket().getOutputStream());
+            writer.write("<stream:message from='"+ from +"' to='"+ to +"' id='"+ messageId +"'> <received xmlns='urn:xmpp:receipts:server'/> </stream:message>");
             writer.flush();
 
+            /// Caching the message locally
             databaseManagement.offlineMessages(from, to, type, content, url, messageId, timestamp);
 
+            /**
+            * Checking if the intended receipient is online
+            */
             if(Server.connections.containsKey(to)){
                 Session toSession = SessionManager.getInstance().getSession(to);
         
@@ -236,8 +280,8 @@ public class MessageTagParser {
                 recWriter.flush();
             }
 
-            //Sends a notification
-            //sendNotificationLatest(from, to, messageId, type, content, url);
+            
+            sendNotificationLatest(from, to, messageId, type, content, url);
         }else{
             /**
              * Note that:
@@ -245,23 +289,28 @@ public class MessageTagParser {
              *  then the received receipts will also have to be cache locally
              *  till the user reconnects
              */
-            logger.info("Processing a received receipt message...");
-            
             if(!(to.startsWith("+234"))) to = databaseManagement.getContactById(to);
 
-            if(Server.connections.containsKey(to)){
-                logger.info("Notifying the original sender that the receiver has received the message");
+            /**
+            * Removing the message from the cache as processed
+            */
+            databaseManagement.removeMessageFromCache(messageId);
 
+            /**
+            * Checking if the original sender of the message is
+            * online such that the receipts could be route to them
+            * else cache the receipts
+            */
+            if(Server.connections.containsKey(to)){
                 Session rec = SessionManager.getInstance().getSession(to);
                 OutputStreamWriter writer = new OutputStreamWriter(rec.getSocket().getOutputStream());
-                //writer.write(String.valueOf(message));
                 writer.write("<stream:message from='"+ from +"' to='"+to+"' id='"+messageId+"'> <received xmlns='urn:xmpp:receipts'/> </stream:message>");
                 writer.flush();
 
-                //databaseManagement.removeMessageFromCache(messageId);
             }else{
-                //TODO: Cache the receipts locally for the user to come online
+                databaseManagement.cacheReceiverReceivedReceipts(from, to, messageId);
             }
+            
         }
 
         isReceived = false; //Sets it back to default at the end of the message processing
@@ -552,8 +601,6 @@ public class MessageTagParser {
      * @param receiver_id The receiver id of the message
      * @param sender_id The sender id of the message
      * @param message_content The actual message content to sent it might be null for media type
-     * //TODO: Instead of hitting the firestore to get the receiver FCM TOKEN, it can be saved on the XMPP 
-     * //Server instead.
      */
     private void sendNotificationLatest(String from, String to, String messageId, String type, String messageContent, String url){
         Session fromSession = SessionManager.getInstance().getSession(from);

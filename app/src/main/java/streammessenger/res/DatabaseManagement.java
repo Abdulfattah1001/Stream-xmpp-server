@@ -255,7 +255,6 @@ public class DatabaseManagement {
 
     public void offlineMessages(String from, String to, String type, String body, String url, String messageId, String timestamp){
         try{
-            logger.info("Caching messages");
 
             String message = "INSERT INTO offline_messages(senderId, receipientId, messageId, encryptedPayload, timestamp) VALUES(?,?,?,?,?)";
             PreparedStatement statement = connection.prepareStatement(message);
@@ -268,14 +267,12 @@ public class DatabaseManagement {
             @SuppressWarnings("unused")
             int result = statement.executeUpdate();
 
-            logger.info("Message cache sucessfully");
         }catch(SQLException exception){
             logger.info("Error occurred caching message locally: "+exception.getMessage());
         }
     }
 
     public void removeMessageFromCache(String messageId){
-        logger.info("Removing message from cache after receiving");
         try{
             String query = "DELETE FROM offline_messages WHERE messageId = ?";
             PreparedStatement statement = connection.prepareStatement(query);
@@ -283,7 +280,6 @@ public class DatabaseManagement {
 
             int result = statement.executeUpdate();
 
-            logger.info("Message removed from cache succVINGessfully...");
         }catch(SQLException exception){
             logger.info("Error occurred removing the message from the caches after receiving");
         }
@@ -298,7 +294,6 @@ public class DatabaseManagement {
      * @param messageId The message Id of the message to be treated
      */
     public void cacheReceiverReceivedReceipts(String from, String to, String messageId){
-        logger.info("Caching the receiver recipts");
         try{
             String updateStatement = "INSERT INTO r_receipts (sender, receiver, messageId) VALUES(?,?,?)";
             PreparedStatement statement = connection.prepareStatement(updateStatement);
@@ -307,11 +302,51 @@ public class DatabaseManagement {
             statement.setString(3, messageId);
 
             @SuppressWarnings("unused")
-            ResultSet resultSet = statement.executeQuery();
+            int resultSet = statement.executeUpdate();
 
-            logger.info("Receiver receive receipts cache successfully");
         }catch(SQLException exception){
             logger.info("Error occurred caching a receiver received receipts: "+exception.getMessage());
+        }
+    }
+
+
+    public List<HashMap<String, Object>> getReceiverReceipts(String jid){
+        List<HashMap<String, Object>> receipts = new ArrayList<>();
+
+        try{
+            String updateString = "SELECT * FROM r_receipts WHERE receiver = ?";
+            PreparedStatement statement = connection.prepareStatement(updateString);
+            statement.setString(1, jid);
+            ResultSet result = statement.executeQuery();
+
+            while(result.next()){
+                HashMap<String, Object> receipt = new HashMap<>();
+                receipt.put("senderId", result.getString("sender"));
+                receipt.put("receiverId", result.getString("receiver"));
+                receipt.put("messageId", result.getString("messageId"));
+
+                receipts.add(receipt);
+            }
+
+            return receipts;
+        }catch(SQLException exception){
+            logger.info("Error occurred "+exception.getMessage());
+        }
+
+        return receipts;
+    }
+
+    public void deleteReceivedReceiptsFromCache(String messageId){
+        try{
+            String query = "DELETE FROM r_receipts WHERE messageId = ?";
+            PreparedStatement statement = connection.prepareStatement(query);
+            statement.setString(1, messageId);
+
+            int result = statement.executeUpdate();
+
+            logger.info("Received receipts removed successfully");
+        }catch(SQLException exception){
+            logger.info("Error occurred removing cache receipts");
         }
     }
 

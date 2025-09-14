@@ -18,7 +18,7 @@ public class StreamHeadParse {
 
     public StreamHeadParse(){}
 
-        /*
+    /*
     * Generate and returns a unique and collision avoidable string
     */
     private String hexSessionId(){
@@ -73,6 +73,9 @@ public class StreamHeadParse {
                 writer.flush();
 
                 checkAndSendCacheMessages(session, Server.getInstance().getDB());
+
+                checkAndSendReceivedReceipts(session, Server.getInstance().getDB());
+                
                 break;
                 
             case RESUMING:
@@ -83,6 +86,30 @@ public class StreamHeadParse {
 
             default:
                 break;
+        }
+    }
+
+    public void checkAndSendReceivedReceipts(Session session, DatabaseManagement db){
+        ArrayList<HashMap<String, Object>> receipts = (ArrayList<HashMap<String, Object>>) db.getReceiverReceipts(session.getContactId());
+
+        if(!receipts.isEmpty()){
+            StringBuilder receiptsBuilder = new StringBuilder();
+
+            for(HashMap<String, Object> receipt : receipts){
+                receiptsBuilder.append("<stream:message from='"+receipt.get("senderId")+"' to='"+receipt.get("receiverId")+"' id='"+receipt.get("messageId")+"'>\n");
+                receiptsBuilder.append("<received xmlns='urn:xmpp:receipts'/>\n");
+                receiptsBuilder.append("</stream:message>");
+            }
+
+            try{
+                OutputStreamWriter writer = new OutputStreamWriter(session.getSocket().getOutputStream());
+                writer.write(String.valueOf(receiptsBuilder));
+                writer.flush();
+            }catch(IOException exception){
+                logger.info("Error occurred getting and sending receipts: "+exception.getMessage());
+            }
+        }else{
+            logger.info("Receiver receipts is empty");
         }
     }
 
@@ -103,7 +130,7 @@ public class StreamHeadParse {
                 messagesBuilder.append(msg.get("body"));
                 messagesBuilder.append("</body>\n");
 
-                messagesBuilder.append("<request xmlns='urn:xmpp:receipts'/>");
+                messagesBuilder.append("<request xmlns='urn:xmpp:receipts'/>\n");
 
                 messagesBuilder.append("<timestamp>");
                 messagesBuilder.append(msg.get("timestamp"));
@@ -113,8 +140,6 @@ public class StreamHeadParse {
                 messagesBuilder.append("</stream:message>\n");
                 
                 messagesBuilder.append("<not-implemented/>\n");
-
-                logger.info(String.valueOf(messagesBuilder));
             }
 
             try{

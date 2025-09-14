@@ -14,6 +14,8 @@ import java.util.logging.Logger;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
+import com.google.firebase.database.Transaction.Result;
+
 public class DatabaseManagement {
     private final String username;
     private final String password;
@@ -251,9 +253,67 @@ public class DatabaseManagement {
     }
 
 
-    public void offlineMessages(String from, String to, String type, String body, String url, String messageId, String timestamp){}
+    public void offlineMessages(String from, String to, String type, String body, String url, String messageId, String timestamp){
+        try{
+            logger.info("Caching messages");
 
-    public void removeMessageFromCache(String messageId){}
+            String message = "INSERT INTO offline_messages(senderId, receipientId, messageId, encryptedPayload, timestamp) VALUES(?,?,?,?,?)";
+            PreparedStatement statement = connection.prepareStatement(message);
+            statement.setString(1, from);
+            statement.setString(2, to);
+            statement.setString(3, messageId);
+            statement.setString(4, body);
+            statement.setString(5, timestamp);
+
+            @SuppressWarnings("unused")
+            int result = statement.executeUpdate();
+
+            logger.info("Message cache sucessfully");
+        }catch(SQLException exception){
+            logger.info("Error occurred caching message locally: "+exception.getMessage());
+        }
+    }
+
+    public void removeMessageFromCache(String messageId){
+        logger.info("Removing message from cache after receiving");
+        try{
+            String query = "DELETE FROM offline_messages WHERE messageId = ?";
+            PreparedStatement statement = connection.prepareStatement(query);
+            statement.setString(1, messageId);
+
+            int result = statement.executeUpdate();
+
+            logger.info("Message removed from cache succVINGessfully...");
+        }catch(SQLException exception){
+            logger.info("Error occurred removing the message from the caches after receiving");
+        }
+    }
+
+    /**
+     * Caches a receipt meant for the original sender 
+     * of a message that the receiver has received the
+     * message
+     * @param from The receiver who received the message
+     * @param to The original sender of the message
+     * @param messageId The message Id of the message to be treated
+     */
+    public void cacheReceiverReceivedReceipts(String from, String to, String messageId){
+        logger.info("Caching the receiver recipts");
+        try{
+            String updateStatement = "INSERT INTO r_receipts (sender, receiver, messageId) VALUES(?,?,?)";
+            PreparedStatement statement = connection.prepareStatement(updateStatement);
+            statement.setString(1, from);
+            statement.setString(2, to);
+            statement.setString(3, messageId);
+
+            @SuppressWarnings("unused")
+            ResultSet resultSet = statement.executeQuery();
+
+            logger.info("Receiver receive receipts cache successfully");
+        }catch(SQLException exception){
+            logger.info("Error occurred caching a receiver received receipts: "+exception.getMessage());
+        }
+    }
 
     public List<HashMap<String, String>> check_for_offline_message(String user_id){
         List<HashMap<String, String>> offline_messages = new ArrayList<>();
@@ -304,6 +364,7 @@ public class DatabaseManagement {
     }
 
     public boolean checkOfflineMessages(String uid){
+        logger.info("Checking for offline messages for user "+uid);
         try{
             String queryString = "SELECT * FROM offline_messages WHERE receipientId = ? LIMIT 1";
             PreparedStatement statement = connection.prepareStatement(queryString);
@@ -315,6 +376,34 @@ public class DatabaseManagement {
             logger.info("Error occurred checking offline message "+e.getMessage());
         }
         return false;
+    }
+
+    public List<HashMap<String, Object>> getOfflineMessages(String uid){
+        logger.info("Checking for offline messages for user "+uid);
+        List<HashMap<String, Object>> messages = new ArrayList<>();
+        try{
+            String queryString = "SELECT * FROM offline_messages WHERE receipientId = ?";
+            PreparedStatement statement = connection.prepareStatement(queryString);
+            statement.setString(1, uid);
+
+            ResultSet resultSet = statement.executeQuery();
+            while(resultSet.next()){
+                HashMap<String, Object> message = new HashMap<>();
+                message.put("senderId", resultSet.getString("senderId"));
+                message.put("receiverId", resultSet.getString("receipientId"));
+                message.put("timestamp", resultSet.getString("timestamp"));
+                message.put("body", resultSet.getString("encryptedPayload"));
+                message.put("messageId", resultSet.getString("messageId"));
+
+                messages.add(message);
+            }
+
+            return messages;
+            
+        } catch (SQLException e) {
+            logger.info("Error occurred checking offline message "+e.getMessage());
+        }
+        return messages;
     }
 
 

@@ -4,6 +4,8 @@ import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.net.Socket;
 import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.logging.Logger;
 
 import javax.xml.stream.XMLEventReader;
@@ -70,7 +72,7 @@ public class StreamHeadParse {
 
                 writer.flush();
 
-                //TODO: Proceeds to check for any pending messages, receipts, e.t.c
+                checkAndSendCacheMessages(session, Server.getInstance().getDB());
                 break;
                 
             case RESUMING:
@@ -81,6 +83,49 @@ public class StreamHeadParse {
 
             default:
                 break;
+        }
+    }
+
+    private void checkAndSendCacheMessages(Session session, DatabaseManagement db){
+        ArrayList<HashMap<String, Object>> messages = (ArrayList<HashMap<String, Object>>) db.getOfflineMessages(session.getContactId());
+
+        if(!messages.isEmpty()){
+            StringBuilder messagesBuilder = new StringBuilder();
+            for(HashMap<String, Object> msg : messages){
+
+                messagesBuilder.append("<stream:message\n"+
+                "from='"+msg.get("senderId")+"'\n"
+                +"to='"+msg.get("receiverId")+"'\n"
+                +"id='"+msg.get("messageId")+"'\n"
+                +"type='TEXT'>\n");
+
+                messagesBuilder.append("<body>");
+                messagesBuilder.append(msg.get("body"));
+                messagesBuilder.append("</body>\n");
+
+                messagesBuilder.append("<request xmlns='urn:xmpp:receipts'/>");
+
+                messagesBuilder.append("<timestamp>");
+                messagesBuilder.append(msg.get("timestamp"));
+                messagesBuilder.append("</timestamp>\n");
+                
+                
+                messagesBuilder.append("</stream:message>\n");
+                
+                messagesBuilder.append("<not-implemented/>\n");
+
+                logger.info(String.valueOf(messagesBuilder));
+            }
+
+            try{
+                OutputStreamWriter writer = new OutputStreamWriter(session.getSocket().getOutputStream());
+                writer.write(String.valueOf(messagesBuilder));
+                writer.flush();
+
+                logger.info("All pending messages send successfully");
+            }catch(IOException exception){
+                logger.info("Error occurred sending messages");
+            }
         }
     }
 }

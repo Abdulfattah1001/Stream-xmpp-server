@@ -24,11 +24,17 @@ public class Server {
     private final static Logger logger = Logger.getLogger("Server");
     public volatile static ConcurrentHashMap<String, Session> connections = new ConcurrentHashMap<String, Session>();
     private final DatabaseManagement db;
+    private static Server instance = null;
 
     private Server(Builder builder){
         PORT = builder.getPort();
         address = builder.getAddress();
         this.db = builder.getDb();
+    }
+
+    public static Server getInstance(){
+        if(instance == null) throw new IllegalStateException("Error getting the Server inistance");
+        return instance;
     }
 
     public void start(){
@@ -40,6 +46,10 @@ public class Server {
                 jobPool.execute(new Connectionhandler(connection, hexSessionId()));
             }
         }catch(IOException exception){}
+    }
+
+    public DatabaseManagement getDB(){
+        return db;
     }
     
     
@@ -157,7 +167,7 @@ public class Server {
                     }
                 }
                 if(exception instanceof XMLStreamException){
-                    logger.warning("Closing the client connection due to XML error");
+                    logger.warning("Closing the client connection due to XML error: "+exception.getLocalizedMessage());
                     Socket socket =  session.getSocket();
                     if(socket.isClosed() || !socket.isConnected()){
                         try{
@@ -206,7 +216,8 @@ public class Server {
         }
 
         public Server build(){
-            return new Server(this);
+            instance =  new Server(this);
+            return instance;
         }
     }
 

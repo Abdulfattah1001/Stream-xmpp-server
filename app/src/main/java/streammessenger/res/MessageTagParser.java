@@ -55,7 +55,8 @@ public class MessageTagParser {
         databaseManagement = DatabaseManagement.getInstance(CredentialManager.getPassword(), CredentialManager.getDatabaseUsername(), CredentialManager.getDatabaseName());
     }
 
-    public void start(StartElement startElement, XMLEventReader reader) throws IOException, XMLStreamException{
+    public void start(StartElement startElement, XMLEventReader reader) throws IOException{
+        logger.info("Message encounter");
         String from = startElement.getAttributeByName(new QName("from")).getValue(); //The sender Contact
         String to = startElement.getAttributeByName(new QName("to")).getValue(); //The recepient Contact
         String messageId = startElement.getAttributeByName(new QName("id")).getValue(); //The message ID
@@ -63,6 +64,7 @@ public class MessageTagParser {
         String type = typeAttr != null ? typeAttr.getValue() : null;
         String url = null;
         String content = null;
+        String timestamp = null;
         Session session = SessionManager.getInstance().getSession(from);
 
         boolean isReceived = false;
@@ -90,10 +92,11 @@ public class MessageTagParser {
         message.append("<stream:message\n");
         message.append("from='"+ from +"'\n");
         message.append("to='"+ to +"'\n");
-        if(typeAttr != null){message.append("type='"+typeAttr.getValue()+"'");}
+        if(typeAttr != null){message.append("type='"+typeAttr.getValue()+"'\n");}
         message.append("id='"+ messageId + "'>\n");
 
-        while(reader.hasNext()){
+        try{
+            while(reader.hasNext()){
             XMLEvent event = reader.nextEvent();
             
             if(event.isCharacters() && event.asCharacters().isWhiteSpace()) continue;
@@ -116,7 +119,7 @@ public class MessageTagParser {
                             }
 
                             if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("body")){
-                                body.append(("</body>"));
+                                body.append(("</body>\n"));
                                 message.append(body.toString());
                                 break;
                             }
@@ -125,16 +128,20 @@ public class MessageTagParser {
                     case "timestamp": //The timestamp of the message
                         StringBuilder timestampBuiler = new StringBuilder();
                         timestampBuiler.append("<timestamp>");
+                        timestamp = new String();
+                        
                         while(reader.hasNext()){
                             event = reader.nextEvent();
                             if(event.isCharacters() && event.asCharacters().isWhiteSpace()) continue;
 
                             if(event.isCharacters()){
                                 timestampBuiler.append(event.asCharacters().getData());
+                                timestamp += event.asCharacters().getData();
                             }
 
                             if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("timestamp")){
                                 timestampBuiler.append("</timestamp>\n");
+                                
                                 message.append(timestampBuiler.toString());
                                 break;
                             }
@@ -162,12 +169,15 @@ public class MessageTagParser {
                 break;
             }
         }
-
+        }catch(XMLStreamException exception){
+            logger.info("Error occurred message: "+exception.getMessage());
+        }
         if(!databaseManagement.isFriends(session.getUid(), to)){
             StreamUser user = databaseManagement.getUserByContactId(from);
 
             if(user != null){
                 message.append("<sender-meta xmlns='urn:xmpp:sender:meta:0'>\n");
+
                 message.append("<display-name>");
                 message.append(user.getDisplayName());
                 message.append("</display-name>\n");
@@ -182,18 +192,20 @@ public class MessageTagParser {
 
                 message.append("<avatar>");
                 message.append(user.getAvatarUrl());
-                message.append("</avatar>");
+                message.append("</avatar>\n");
 
                 message.append("<status>");
                 message.append(user.getStatus());
-                message.append("</status>");
+                message.append("</status>\n");
 
-                message.append("<sender-meta>");
+                message.append("</sender-meta>\n");
             }
         }
 
         message.append("</stream:message>\n");
-        message.append("<not-implemented />\n");        
+        message.append("<not-implemented />\n");     
+        
+        logger.info(String.valueOf(message));
 
         //If the receiver is online, routes the message to the them directly
         /**
@@ -212,10 +224,10 @@ public class MessageTagParser {
             writer.write("<stream:message from='"+ from +"' to='"+to+"' id='"+messageId+"'> <received xmlns='urn:xmpp:receipts:server'/> </stream:message>");
             writer.flush();
 
-            //TODO: Cache the message locally
+            databaseManagement.offlineMessages(from, to, type, content, url, messageId, timestamp);
 
             if(Server.connections.containsKey(to)){
-                 Session toSession = SessionManager.getInstance().getSession(to);
+                Session toSession = SessionManager.getInstance().getSession(to);
         
                 Socket socket = toSession.getSocket();
 
@@ -225,7 +237,7 @@ public class MessageTagParser {
             }
 
             //Sends a notification
-            sendNotificationLatest(from, to, messageId, type, content, url);
+            //sendNotificationLatest(from, to, messageId, type, content, url);
         }else{
             /**
              * Note that:
@@ -246,7 +258,7 @@ public class MessageTagParser {
                 writer.write("<stream:message from='"+ from +"' to='"+to+"' id='"+messageId+"'> <received xmlns='urn:xmpp:receipts'/> </stream:message>");
                 writer.flush();
 
-                databaseManagement.removeMessageFromCache(messageId);
+                //databaseManagement.removeMessageFromCache(messageId);
             }else{
                 //TODO: Cache the receipts locally for the user to come online
             }

@@ -130,6 +130,8 @@ public class StreamHeadParse {
                 messagesBuilder.append(msg.get("body"));
                 messagesBuilder.append("</body>\n");
 
+                if(msg.containsKey("parentId")) messagesBuilder.append("<reply id='"+msg.get("parentId")+"' />\n");
+
                 messagesBuilder.append("<request xmlns='urn:xmpp:receipts'/>\n");
 
                 messagesBuilder.append("<timestamp>");

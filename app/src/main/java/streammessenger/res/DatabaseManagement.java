@@ -272,6 +272,25 @@ public class DatabaseManagement {
         }
     }
 
+    public void offlineReplyMessages(String from, String to, String type, String body, String url, String messageId, @Nullable String parentId, String timestamp){
+        try{
+            String message = "INSERT INTO offline_messages(senderId, receipientId, messageId, parentId, encryptedPayload, timestamp) VALUES(?,?,?,?,?,?)";
+            PreparedStatement statement = connection.prepareStatement(message);
+            
+            statement.setString(1, from);
+            statement.setString(2, to);
+            statement.setString(3, messageId);
+            statement.setString(4, parentId);
+            statement.setString(5, body);
+            statement.setString(6, timestamp);
+
+            @SuppressWarnings("unused")
+            int result = statement.executeUpdate();
+        }catch(SQLException exception){
+            logger.info("Error occurred caching reply message locally for user: "+exception.getMessage());
+        }
+    }
+
     public void removeMessageFromCache(String messageId){
         try{
             String query = "DELETE FROM offline_messages WHERE messageId = ?";
@@ -414,7 +433,6 @@ public class DatabaseManagement {
     }
 
     public List<HashMap<String, Object>> getOfflineMessages(String uid){
-        logger.info("Checking for offline messages for user "+uid);
         List<HashMap<String, Object>> messages = new ArrayList<>();
         try{
             String queryString = "SELECT * FROM offline_messages WHERE receipientId = ?";
@@ -429,6 +447,7 @@ public class DatabaseManagement {
                 message.put("timestamp", resultSet.getString("timestamp"));
                 message.put("body", resultSet.getString("encryptedPayload"));
                 message.put("messageId", resultSet.getString("messageId"));
+                if(resultSet.getString("parentId") != null) message.put("parentId", resultSet.getString("parentId"));
 
                 messages.add(message);
             }

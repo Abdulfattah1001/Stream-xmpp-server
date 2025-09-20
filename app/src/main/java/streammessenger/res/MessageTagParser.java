@@ -46,6 +46,7 @@ public class MessageTagParser {
         databaseManagement = DatabaseManagement.getInstance(CredentialManager.getPassword(), CredentialManager.getDatabaseUsername(), CredentialManager.getDatabaseName());
     }
 
+
     public void start(StartElement startElement, XMLEventReader reader) throws IOException{
         String from = startElement.getAttributeByName(new QName("from")).getValue();
         String to = startElement.getAttributeByName(new QName("to")).getValue();
@@ -56,10 +57,13 @@ public class MessageTagParser {
         String url = null;
         String content = null;
         String timestamp = null;
+        String parentId = null;
 
         Session session = SessionManager.getInstance().getSession(from);
 
         boolean isReceived = false;
+
+        boolean isReplyMessage = false;
 
         if(!session.isAuthenticated() || session.getSessionState() == SessionState.INITIAL){
 
@@ -121,6 +125,7 @@ public class MessageTagParser {
                         break;
 
                     case "timestamp":
+
                         StringBuilder timestampBuiler = new StringBuilder();
                         timestampBuiler.append("<timestamp>");
                         timestamp = new String();
@@ -153,15 +158,8 @@ public class MessageTagParser {
 
                     case "received":
                         String namespace = event.asStartElement().getName().getNamespaceURI();
-                        logger.info("Processing received tag: "+namespace);
-
-                        /*if(namespace.equals("urn:xmpp:receipts:client")){
-                            logger.info("The client has received the receipts deleting from cache now..."+messageId);
-                            databaseManagement.deleteReceivedReceiptsFromCache(messageId);
-                        }else{
-                            message.append("<received xmlns='urn:xmpp:receipts'/>\n");
-                            isReceived = true;
-                        }*/
+                        //message.append("<received xmlns='urn:xmpp:receipts'/>\n");
+                        //isReceived = true;
 
                         switch (namespace) {
                             /**
@@ -171,9 +169,9 @@ public class MessageTagParser {
                             * from the local cache as being treated
                             */
                             case "urn:xmpp:receipts:client":
-                                logger.info("Removing the receipts from cache ...");
                                 databaseManagement.deleteReceivedReceiptsFromCache(messageId);
-                                break;
+                                return; //The message processing should end here, since the receiver is finalizing the message stanza request
+                                //break;
 
                             /**
                             * The receiver sending back an acknowledgement as a response to 
@@ -196,6 +194,12 @@ public class MessageTagParser {
                     case "request":
                         message.append("<request xmlns='urn:xmpp:receipts'/>\n");
                         break;
+                    case "reply":
+                        isReplyMessage = true;
+                        parentId = new String();
+                        parentId = event.asStartElement().getAttributeByName(new QName("id")).getValue();
+                        message.append("<reply id='" + parentId + "'/>");
+                        break;
                     default:
                         break;                               
                 }
@@ -206,76 +210,6 @@ public class MessageTagParser {
 
         }catch(XMLStreamException exception){
             logger.info("Error occurred message: "+exception.getMessage());
-        }
-
-        /**
-         * The message will have to be cache locally regardless until the 
-         * receiver acknowledge that it has received it
-         * which only happends when the receiver sends back
-         * a <received /> tag element that it has received the 
-         * message, so the server would be able to remove the message
-         * from the local storage or cache
-         */
-
-        if(isReceived == false){
-            logger.info("processing normal messages: "+String.valueOf(message));
-            
-            /**
-            * Sending back an acknowledgement to the sender 
-            * that the message is now in the hands of the server
-            */
-            OutputStreamWriter writer = new OutputStreamWriter(session.getSocket().getOutputStream());
-            writer.write("<stream:message from='"+ from +"' to='"+ to +"' id='"+ messageId +"'> <received xmlns='urn:xmpp:receipts:server'/> </stream:message>");
-            writer.flush();
-
-            /// Caching the message locally
-            databaseManagement.offlineMessages(from, to, type, content, url, messageId, timestamp);
-
-            /**
-            * Checking if the intended receipient is online
-            */
-            if(Server.connections.containsKey(to)){
-                Session toSession = SessionManager.getInstance().getSession(to);
-        
-                Socket socket = toSession.getSocket();
-
-                OutputStreamWriter recWriter = new OutputStreamWriter(socket.getOutputStream());
-                recWriter.write(String.valueOf(message));
-                recWriter.flush();
-            }
-
-            
-            sendNotificationLatest(from, to, messageId, type, content, url);
-        }else{
-            logger.info("Received message");
-            /**
-             * Note that:
-             *  Here also, if the original sender of the message is not online
-             *  then the received receipts will also have to be cache locally
-             *  till the user reconnects
-             */
-            if(!(to.startsWith("+234"))) to = databaseManagement.getContactById(to);
-
-            /**
-            * Removing the message from the cache as processed
-            */
-            databaseManagement.removeMessageFromCache(messageId);
-
-            /**
-            * Checking if the original sender of the message is
-            * online such that the receipts could be route to them
-            * else cache the receipts
-            */
-            if(Server.connections.containsKey(to)){
-                Session rec = SessionManager.getInstance().getSession(to);
-                OutputStreamWriter writer = new OutputStreamWriter(rec.getSocket().getOutputStream());
-                writer.write("<stream:message from='"+ from +"' to='"+to+"' id='"+messageId+"'> <received xmlns='urn:xmpp:receipts'/> </stream:message>");
-                writer.flush();
-
-            }else{
-                databaseManagement.cacheReceiverReceivedReceipts(from, to, messageId);
-            }
-            
         }
 
 
@@ -317,10 +251,81 @@ public class MessageTagParser {
 
         message.append("<not-implemented />\n"); //This should not be processed on the client side as it's used to flush out the complete <stream:message></stream:message>
 
+        /**
+         * The message will have to be cache locally regardless until the 
+         * receiver acknowledge that it has received it
+         * which only happends when the receiver sends back
+         * a <received /> tag element that it has received the 
+         * message, so the server would be able to remove the message
+         * from the local storage or cache
+         */
+
+        if(isReceived == false){            
+            /**
+            * Sending back an acknowledgement to the sender 
+            * that the message is now in the hands of the server
+            */
+            OutputStreamWriter writer = new OutputStreamWriter(session.getSocket().getOutputStream());
+            writer.write("<stream:message from='"+ from +"' to='"+ to +"' id='"+ messageId +"'> <received xmlns='urn:xmpp:receipts:server'/> </stream:message>");
+            writer.flush();
+
+            /// Caching the message locally
+            if(isReplyMessage){
+                databaseManagement.offlineReplyMessages(from, to, type, content, url, messageId, parentId, timestamp);
+            }else{
+                databaseManagement.offlineMessages(from, to, type, content, url, messageId, timestamp);
+            }
+
+            /**
+            * Checking if the intended receipient is online
+            */
+            if(Server.connections.containsKey(to)){
+                Session toSession = SessionManager.getInstance().getSession(to);
+        
+                Socket socket = toSession.getSocket();
+
+                OutputStreamWriter recWriter = new OutputStreamWriter(socket.getOutputStream());
+                recWriter.write(String.valueOf(message));
+                recWriter.flush();
+            }
+
+            
+            sendNotificationLatest(from, to, messageId, type, content, url);
+        }else{
+            /**
+             * Note that:
+             *  Here also, if the original sender of the message is not online
+             *  then the received receipts will also have to be cache locally
+             *  till the user reconnects
+             */
+            if(!(to.startsWith("+234"))) to = databaseManagement.getContactById(to);
+
+            /**
+            * Removing the message from the cache as processed
+            */
+            databaseManagement.removeMessageFromCache(messageId);
+
+            /**
+            * Checking if the original sender of the message is
+            * online such that the receipts could be route to them
+            * else cache the receipts
+            */
+            if(Server.connections.containsKey(to)){
+                Session rec = SessionManager.getInstance().getSession(to);
+                OutputStreamWriter writer = new OutputStreamWriter(rec.getSocket().getOutputStream());
+                writer.write("<stream:message from='"+ from +"' to='"+to+"' id='"+messageId+"'> <received xmlns='urn:xmpp:receipts'/> </stream:message>");
+                writer.flush();
+
+            }else{
+                databaseManagement.cacheReceiverReceivedReceipts(from, to, messageId);
+            }
+            
+        }
+
         isReceived = false; //Sets it back to default at the end of the message processing
+        isReplyMessage = false;
     }
     
-
     public void processMessage() throws XMLStreamException{
         String sender = messageStartElement.getAttributeByName(new QName("from")).getValue();
         String receiver = messageStartElement.getAttributeByName(new QName("to")).getValue();

@@ -32,9 +32,6 @@ public class SessionManager {
      * @return Session
      */
     public Session getSession(String jid){
-        if(Server.connections.containsKey(jid)){
-            System.out.println("The Session is present....");
-        }
         return Server.connections.get(jid);
     }
 

@@ -1,0 +1,510 @@
+package streammessenger.push;
+
+import javax.net.ssl.HttpsURLConnection;
+import java.io.*;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.*;
+import java.util.logging.Logger;
+
+import streammessenger.db.DatabaseManager;
+
+/**
+ * Push notification delivery via FCM (Android) and APNs (iOS).
+ *
+ * Called when:
+ *  - A message arrives for an offline user
+ *  - A group message arrives and members are offline
+ *  - A status is posted by a contact
+ *  - A call is incoming
+ *
+ * Notification payload is MINIMAL by design:
+ *  - We do NOT send message content in push
+ *  - We send only: "you have a new message from X"
+ *  - Client fetches the actual content via XMPP on wake
+ *
+ * Why minimal push:
+ *  - Push passes through Google/Apple servers
+ *  - Sending ciphertext in push is redundant (app will fetch anyway)
+ *  - Sending plaintext in push violates E2E encryption
+ */
+public final class PushNotificationService {
+
+    private static final Logger logger =
+            Logger.getLogger(PushNotificationService.class.getName());
+
+    // FCM HTTP v1 API endpoint
+    private static final String FCM_URL =
+            "https://fcm.googleapis.com/v1/projects/%s/messages:send";
+
+    // APNs endpoint (production)
+    private static final String APNS_URL =
+            "https://api.push.apple.com/3/device/%s";
+
+    // APNs endpoint (sandbox for dev)
+    private static final String APNS_SANDBOX_URL =
+            "https://api.sandbox.push.apple.com/3/device/%s";
+
+    private final String fcmProjectId;
+    private final String fcmServiceAccountJson; // OAuth2 access token source
+    private final String apnsBundleId;
+    private final boolean isDev;
+    private final DatabaseManager db;
+
+    // Thread pool for async push delivery
+    private final ExecutorService executor = new ThreadPoolExecutor(
+            2, 20,
+            60L, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(1000),
+            new ThreadPoolExecutor.CallerRunsPolicy()
+    );
+
+    // FCM OAuth2 token cache
+    private volatile String fcmAccessToken;
+    private volatile long fcmTokenExpiresAt = 0;
+
+    private static PushNotificationService instance = null;
+
+    public PushNotificationService(String fcmProjectId,
+                                    String fcmServiceAccountJson,
+                                    String apnsBundleId,
+                                    boolean isDev,
+                                    DatabaseManager db) {
+        this.fcmProjectId          = fcmProjectId;
+        this.fcmServiceAccountJson = fcmServiceAccountJson;
+        this.apnsBundleId          = apnsBundleId;
+        this.isDev                 = isDev;
+        this.db                    = db;
+    }
+
+    public static PushNotificationService getInstance() {
+        return instance;
+    }
+
+    // =========================================================================
+    // Public API
+    // =========================================================================
+
+    /**
+     * Sends a "new message" push notification.
+     * Called when a message is stored offline.
+     */
+    public void sendMessageNotification(String toUserId,
+                                         String fromDisplayName,
+                                         String messageType) {
+        executor.execute(() -> {
+            DatabaseManager.PushTarget target = db.getPushTarget(toUserId);
+            if (target == null || target.pushToken() == null) return;
+
+            String title = fromDisplayName;
+            String body  = switch (messageType) {
+                case "image"    -> "📷 Photo";
+                case "video"    -> "🎥 Video";
+                case "audio"    -> "🎤 Voice message";
+                case "file"     -> "📎 File";
+                case "location" -> "📍 Location";
+                default          -> "New message";
+            };
+
+            sendPush(target, title, body, "message",
+                    toUserId, null);
+        });
+    }
+
+    /**
+     * Sends a "missed call" push notification.
+     */
+    public void sendCallNotification(String toUserId,
+                                      String callerDisplayName,
+                                      String callType,
+                                      String callId) {
+        executor.execute(() -> {
+            DatabaseManager.PushTarget target = db.getPushTarget(toUserId);
+            if (target == null || target.pushToken() == null) return;
+
+            String emoji = "video".equals(callType) ? "📹" : "📞";
+            sendPush(target,
+                    emoji + " Incoming " + callType + " call",
+                    callerDisplayName,
+                    "call",
+                    toUserId, callId);
+        });
+    }
+
+    /**
+     * Sends a "new group message" push notification.
+     */
+    public void sendGroupMessageNotification(String toUserId,
+                                              String groupName,
+                                              String senderName,
+                                              String messageType) {
+        executor.execute(() -> {
+            DatabaseManager.PushTarget target = db.getPushTarget(toUserId);
+            if (target == null || target.pushToken() == null) return;
+
+            String body = switch (messageType) {
+                case "image" -> senderName + ": 📷 Photo";
+                case "video" -> senderName + ": 🎥 Video";
+                case "audio" -> senderName + ": 🎤 Voice message";
+                default       -> senderName + ": New message";
+            };
+
+            sendPush(target, groupName, body,
+                    "group_message", toUserId, null);
+        });
+    }
+
+    /**
+     * Sends a "new status" push notification to a follower.
+     */
+    public void sendStatusNotification(String toUserId,
+                                        String authorName) {
+        executor.execute(() -> {
+            DatabaseManager.PushTarget target = db.getPushTarget(toUserId);
+            if (target == null || target.pushToken() == null) return;
+
+            sendPush(target,
+                    authorName + " posted a status",
+                    "Tap to view",
+                    "status", toUserId, null);
+        });
+    }
+
+    /**
+     * Sends a "new blog post" push notification.
+     */
+    public void sendBlogNotification(String toUserId,
+                                      String authorName,
+                                      String blogTitle) {
+        executor.execute(() -> {
+            DatabaseManager.PushTarget target = db.getPushTarget(toUserId);
+            if (target == null || target.pushToken() == null) return;
+
+            sendPush(target,
+                    authorName + " published an article",
+                    blogTitle,
+                    "blog", toUserId, null);
+        });
+    }
+
+    // =========================================================================
+    // Core delivery
+    // =========================================================================
+
+    private void sendPush(DatabaseManager.PushTarget target,
+                           String title,
+                           String body,
+                           String type,
+                           String toUserId,
+                           String referenceId) {
+
+
+        // Idempotency key prevents duplicate pushes
+        String idempotencyKey = type + ":" + toUserId + ":"
+                + System.currentTimeMillis() / 60_000; // 1-minute window
+
+        boolean success = false;
+        String errorCode = null;
+
+        try {
+            if ("android".equalsIgnoreCase(target.platform())) {
+                success = sendFCM(target.pushToken(), title, body,
+                        type, referenceId);
+            } else if ("ios".equalsIgnoreCase(target.platform())) {
+                success = sendAPNs(target.pushToken(), title, body,
+                        type, referenceId);
+            }
+        } catch (Exception e) {
+            errorCode = e.getMessage();
+            logger.warning("Push failed for userId=" + toUserId
+                    + ": " + e.getMessage());
+        }
+
+        // Log the attempt
+        db.logPushNotification(toUserId, target.pushToken(),
+                target.platform(), type, referenceId,
+                success, errorCode, idempotencyKey);
+
+        if (!success && "TOKEN_EXPIRED".equals(errorCode)) {
+            // Token is invalid - clear it so we stop trying
+            db.clearPushToken(toUserId, target.pushToken());
+        }
+    }
+
+    // =========================================================================
+    // FCM (Android)
+    // =========================================================================
+
+    private boolean sendFCM(String token,
+                              String title,
+                              String body,
+                              String type,
+                              String referenceId) throws IOException {
+
+        String accessToken = getFCMAccessToken();
+        String url = String.format(FCM_URL, fcmProjectId);
+
+        // Build FCM v1 payload
+        String payload = String.format("""
+            {
+              "message": {
+                "token": "%s",
+                "notification": {
+                  "title": "%s",
+                  "body": "%s"
+                },
+                "data": {
+                  "type": "%s",
+                  "reference_id": "%s"
+                },
+                "android": {
+                  "priority": "HIGH",
+                  "notification": {
+                    "channel_id": "messages",
+                    "sound": "default"
+                  }
+                }
+              }
+            }
+            """,
+                escapeJson(token),
+                escapeJson(title),
+                escapeJson(body),
+                type,
+                referenceId != null ? referenceId : ""
+        );
+
+        return postJson(url, payload,
+                "Authorization", "Bearer " + accessToken);
+    }
+
+    /**
+     * Gets or refreshes the FCM OAuth2 access token.
+     * FCM v1 requires OAuth2 - not the legacy server key.
+     *
+     * In production: use a proper OAuth2 library or Google Auth Library.
+     * Here: simplified JWT-based token generation.
+     */
+    private synchronized String getFCMAccessToken() throws IOException {
+        if (fcmAccessToken != null
+                && System.currentTimeMillis() < fcmTokenExpiresAt - 60_000) {
+            return fcmAccessToken;
+        }
+
+        // Build JWT for Google OAuth2
+        // In production: parse the service account JSON properly
+        // This is a simplified placeholder
+        String jwt = buildServiceAccountJWT();
+
+        String tokenUrl = "https://oauth2.googleapis.com/token";
+        String payload = "grant_type=urn%3Aietf%3Aparams%3Aoauth%3A"
+                + "grant-type%3Ajwt-bearer&assertion=" + jwt;
+
+        // POST to get access token
+        URL url = new URL(tokenUrl);
+        HttpsURLConnection conn =
+                (HttpsURLConnection) url.openConnection();
+        conn.setDoOutput(true);
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Content-Type",
+                "application/x-www-form-urlencoded");
+
+        try (OutputStream os = conn.getOutputStream()) {
+            os.write(payload.getBytes(StandardCharsets.UTF_8));
+        }
+
+        String response;
+        try (InputStream is = conn.getInputStream()) {
+            response = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+        }
+
+        // Parse access_token from response
+        String token = extractJsonValue(response, "access_token");
+        String expiresIn = extractJsonValue(response, "expires_in");
+
+        fcmAccessToken = token;
+        fcmTokenExpiresAt = System.currentTimeMillis()
+                + (Long.parseLong(expiresIn) * 1000);
+
+        return fcmAccessToken;
+    }
+
+    private String buildServiceAccountJWT() {
+        // In production: implement proper JWT signing with RS256
+        // using the private key from the service account JSON
+        // This placeholder shows the structure
+        long now = System.currentTimeMillis() / 1000;
+
+        String header = java.util.Base64.getUrlEncoder()
+                .encodeToString("{\"alg\":\"RS256\",\"typ\":\"JWT\"}"
+                        .getBytes());
+
+        String claims = java.util.Base64.getUrlEncoder()
+                .encodeToString(String.format("""
+                    {
+                      "iss": "firebase-adminsdk@%s.iam.gserviceaccount.com",
+                      "scope": "https://www.googleapis.com/auth/firebase.messaging",
+                      "aud": "https://oauth2.googleapis.com/token",
+                      "iat": %d,
+                      "exp": %d
+                    }
+                    """, fcmProjectId, now, now + 3600)
+                        .getBytes());
+
+        // TODO: Sign header.claims with RSA private key from service account
+        // String signature = rsaSign(header + "." + claims, privateKey);
+        // return header + "." + claims + "." + signature;
+
+        throw new UnsupportedOperationException(
+            "Implement JWT signing with service account private key");
+    }
+
+    // =========================================================================
+    // APNs (iOS)
+    // =========================================================================
+
+    private boolean sendAPNs(String deviceToken,
+                               String title,
+                               String body,
+                               String type,
+                               String referenceId) throws IOException {
+
+        String url = String.format(
+                isDev ? APNS_SANDBOX_URL : APNS_URL, deviceToken);
+
+        String payload = String.format("""
+            {
+              "aps": {
+                "alert": {
+                  "title": "%s",
+                  "body": "%s"
+                },
+                "sound": "default",
+                "badge": 1,
+                "mutable-content": 1
+              },
+              "type": "%s",
+              "reference_id": "%s"
+            }
+            """,
+                escapeJson(title),
+                escapeJson(body),
+                type,
+                referenceId != null ? referenceId : ""
+        );
+
+        // APNs uses HTTP/2 with JWT authentication
+        // Requires the APNs auth key (.p8 file) from Apple Developer
+        // In production: use a proper HTTP/2 client
+        // Java 11+ HttpClient supports HTTP/2
+
+        java.net.http.HttpClient client =
+                java.net.http.HttpClient.newHttpClient();
+
+        java.net.http.HttpRequest request =
+                java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create(url))
+                .header("apns-topic", apnsBundleId)
+                .header("apns-push-type", "alert")
+                .header("apns-priority", "10")
+                .header("authorization", "bearer " + getAPNsToken())
+                .header("content-type", "application/json")
+                .POST(java.net.http.HttpRequest.BodyPublishers
+                        .ofString(payload))
+                .build();
+
+        try {
+            java.net.http.HttpResponse<String> response =
+                    client.send(request,
+                            java.net.http.HttpResponse.BodyHandlers
+                                    .ofString());
+
+            int status = response.statusCode();
+            if (status == 200) return true;
+
+            logger.warning("APNs error " + status + ": " + response.body());
+            return false;
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    private String getAPNsToken() {
+        // Build JWT signed with APNs auth key (.p8)
+        // In production: implement with the auth key from Apple
+        throw new UnsupportedOperationException(
+            "Implement APNs JWT with .p8 auth key");
+    }
+
+    // =========================================================================
+    // Helpers
+    // =========================================================================
+
+    private boolean postJson(String urlStr, String payload,
+                              String authHeader, String authValue)
+            throws IOException {
+
+        URL url = new URL(urlStr);
+        HttpsURLConnection conn = (HttpsURLConnection) url.openConnection();
+        conn.setDoOutput(true);
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty(authHeader, authValue);
+        conn.setConnectTimeout(5_000);
+        conn.setReadTimeout(10_000);
+
+        try (OutputStream os = conn.getOutputStream()) {
+            os.write(payload.getBytes(StandardCharsets.UTF_8));
+        }
+
+        int status = conn.getResponseCode();
+
+        if (status >= 200 && status < 300) return true;
+
+        // Read error body
+        String error = "";
+        try (InputStream es = conn.getErrorStream()) {
+            if (es != null) {
+                error = new String(es.readAllBytes(), StandardCharsets.UTF_8);
+            }
+        }
+
+        logger.warning("Push HTTP " + status + ": " + error);
+
+        if (error.contains("UNREGISTERED") || error.contains("InvalidRegistration")) {
+            throw new IOException("TOKEN_EXPIRED");
+        }
+
+        return false;
+    }
+
+    private String extractJsonValue(String json, String key) {
+        String search = "\"" + key + "\":\"";
+        int idx = json.indexOf(search);
+        if (idx == -1) {
+            // Try without quotes (for numbers)
+            search = "\"" + key + "\":";
+            idx = json.indexOf(search);
+            if (idx == -1) return "0";
+            int start = idx + search.length();
+            int end   = json.indexOf(",", start);
+            if (end == -1) end = json.indexOf("}", start);
+            return json.substring(start, end).trim();
+        }
+        int start = idx + search.length();
+        int end = json.indexOf("\"", start);
+        return json.substring(start, end);
+    }
+
+    private String escapeJson(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\").replace("\"", "\\\"")
+                .replace("\n", "\\n").replace("\r", "\\r");
+    }
+
+    public void shutdown() {
+        executor.shutdown();
+    }
+}

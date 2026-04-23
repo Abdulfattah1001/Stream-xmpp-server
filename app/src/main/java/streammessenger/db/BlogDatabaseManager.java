@@ -1,0 +1,1248 @@
+package streammessenger.db;
+
+import java.sql.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.logging.Logger;
+
+/**
+ * All blog-related database operations.
+ * Separated from the main DatabaseManager to keep file sizes manageable.
+ * Injected into BlogHandler alongside the main DatabaseManager.
+ */
+public final class BlogDatabaseManager {
+
+    private static final Logger logger =
+            Logger.getLogger(BlogDatabaseManager.class.getName());
+
+    private final ConnectionPool pool;
+
+    public BlogDatabaseManager(ConnectionPool pool) {
+        this.pool = pool;
+    }
+
+    // =========================================================================
+    // Records
+    // =========================================================================
+
+    /**
+     * Minimal blog info returned after publish/update.
+     */
+    public record BlogRecord(
+            String blogId,
+            String slug,
+            String title,
+            String summary,
+            String state,       // draft | published | archived
+            String expiresAt    // null = never expires
+    ) {}
+
+    /**
+     * Full blog post with all blocks and user-specific state.
+     * Returned by handleGet().
+     */
+    public record BlogDetailRecord(
+            String blogId,
+            String slug,
+            String title,
+            String summary,
+            String authorJid,
+            String authorUserId,
+            String authorDisplayName,
+            String authorAvatarUrl,
+            String state,
+            String visibility,
+            long viewCount,
+            int likeCount,
+            int commentCount,
+            int shareCount,
+            int readTimeMinutes,
+            String publishedAt,
+            String expiresAt,
+            List<String> tags,
+            List<BlogBlock> blocks,
+            String coverImageUrl,
+            // Viewer-specific state
+            boolean userLiked,
+            boolean userBookmarked,
+            boolean userFollowingAuthor
+    ) {}
+
+    /**
+     * Lightweight blog summary for list views.
+     * Returned by handleList() - no full content blocks.
+     */
+    public record BlogSummaryRecord(
+            String blogId,
+            String slug,
+            String title,
+            String summary,
+            String authorJid,
+            String authorDisplayName,
+            String authorAvatarUrl,
+            String state,
+            String visibility,
+            long viewCount,
+            int likeCount,
+            int commentCount,
+            int readTimeMinutes,
+            String publishedAt,
+            String expiresAt,
+            List<String> tags,
+            String coverImageUrl,
+            boolean userLiked,
+            boolean userBookmarked
+    ) {}
+
+    /**
+     * A single content block within a blog post.
+     * Blocks are ordered by the 'position' field.
+     */
+    public record BlogBlock(
+            String blockId,      // UUID assigned by DB
+            String type,         // paragraph|heading1|heading2|heading3|
+                                 // image|video|code|quote|divider|
+                                 // embed|list|callout
+            String content,      // Text content
+            String mediaStorageKey, // For image/video blocks
+            String mediaUrl,     // CDN URL after processing
+            String mimeType,     // image/jpeg, video/mp4, etc.
+            String language      // For code blocks: java, python, etc.
+    ) {}
+
+    /**
+     * Paginated list result returned by handleList().
+     */
+    public record BlogListResult(
+            List<BlogSummaryRecord> blogs,
+            long total              // Total matching blogs (for pagination)
+    ) {}
+
+    /**
+     * Result of a like toggle operation.
+     */
+    public record LikeResult(
+            boolean nowLiked,   // true = user now likes it, false = unliked
+            int newCount        // Updated like count
+    ) {}
+
+    /**
+     * A blog comment.
+     */
+    public record CommentRecord(
+            String commentId,
+            String blogId,
+            String authorJid,
+            String authorDisplayName,
+            String content,
+            int likeCount,
+            String parentCommentId, // null = top-level comment
+            String createdAt,
+            String updatedAt,
+            boolean userLiked,
+            List<CommentRecord> replies  // Only populated for top-level comments
+    ) {}
+
+    // =========================================================================
+    // Publish / Update Blog
+    // =========================================================================
+
+    /**
+     * Creates a new blog post or updates an existing draft.
+     *
+     * @param blogId      null = create new, non-null = update existing
+     * @param userId      The author's user_id
+     * @param title       Blog title
+     * @param slug        URL-friendly slug (generated by BlogHandler)
+     * @param summary     Optional short summary
+     * @param blocks      Content blocks in order
+     * @param tags        Optional tags
+     * @param visibility  public | contacts | private
+     * @param expiresDays null = never expires
+     * @param state       draft | published
+     * @return BlogRecord on success, null on failure
+     */
+    public BlogRecord publishBlog(String blogId,
+                                   String userId,
+                                   String title,
+                                   String slug,
+                                   String summary,
+                                   List<BlogBlock> blocks,
+                                   List<String> tags,
+                                   String visibility,
+                                   Integer expiresDays,
+                                   String state) {
+        try (Connection conn = pool.getConnection()) {
+            BlogRecord result;
+
+            if (blogId == null) {
+                result = insertBlog(conn, userId, title, slug, summary,
+                        tags, visibility, expiresDays, state);
+            } else {
+                result = updateBlog(conn, blogId, userId, title, slug,
+                        summary, tags, visibility, expiresDays, state);
+            }
+
+            if (result == null) {
+                conn.rollback();
+                return null;
+            }
+
+            // Replace content blocks
+            deleteBlocks(conn, result.blogId());
+            insertBlocks(conn, result.blogId(), blocks);
+
+            // Calculate and update read time
+            int readTime = estimateReadTime(blocks);
+            updateReadTime(conn, result.blogId(), readTime);
+
+            conn.commit();
+            return result;
+
+        } catch (SQLException e) {
+            logger.severe("publishBlog error: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private BlogRecord insertBlog(Connection conn,
+                                   String userId,
+                                   String title,
+                                   String slug,
+                                   String summary,
+                                   List<String> tags,
+                                   String visibility,
+                                   Integer expiresDays,
+                                   String state) throws SQLException {
+        String sql = """
+            INSERT INTO blogs (
+                author_user_id, title, slug, summary,
+                tags, visibility, state,
+                expires_at, published_at,
+                content_json, created_at, updated_at
+            )
+            SELECT
+                ?, ?, ?, ?,
+                ?::text[], ?, ?,
+                CASE WHEN ? IS NOT NULL
+                     THEN NOW() + (? || ' days')::INTERVAL
+                     ELSE NULL
+                END,
+                CASE WHEN ? = 'published' THEN NOW() ELSE NULL END,
+                '{}', NOW(), NOW()
+            RETURNING
+                blog_id::text, slug, title, summary, state,
+                expires_at::text
+            """;
+
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, userId);
+            stmt.setString(2, title);
+            stmt.setString(3, slug);
+            stmt.setString(4, summary);
+
+            // PostgreSQL array for tags
+            Array tagsArray = conn.createArrayOf("text",
+                    tags != null ? tags.toArray() : new String[0]);
+            stmt.setArray(5, tagsArray);
+
+            stmt.setString(6, visibility);
+            stmt.setString(7, state);
+
+            // expires_at calculation
+            if (expiresDays != null) {
+                stmt.setInt(8, expiresDays);
+                stmt.setInt(9, expiresDays);
+            } else {
+                stmt.setNull(8, Types.INTEGER);
+                stmt.setNull(9, Types.INTEGER);
+            }
+
+            stmt.setString(10, state);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (!rs.next()) return null;
+                return new BlogRecord(
+                        rs.getString("blog_id"),
+                        rs.getString("slug"),
+                        rs.getString("title"),
+                        rs.getString("summary"),
+                        rs.getString("state"),
+                        rs.getString("expires_at")
+                );
+            }
+        }
+    }
+
+    private BlogRecord updateBlog(Connection conn,
+                                   String blogId,
+                                   String userId,
+                                   String title,
+                                   String slug,
+                                   String summary,
+                                   List<String> tags,
+                                   String visibility,
+                                   Integer expiresDays,
+                                   String state) throws SQLException {
+        String sql = """
+            UPDATE blogs SET
+                title        = ?,
+                slug         = ?,
+                summary      = ?,
+                tags         = ?::text[],
+                visibility   = ?,
+                state        = ?,
+                expires_at   = CASE WHEN ? IS NOT NULL
+                                    THEN NOW() + (? || ' days')::INTERVAL
+                                    ELSE expires_at
+                               END,
+                published_at = CASE WHEN state != 'published'
+                                     AND ? = 'published'
+                                    THEN NOW()
+                                    ELSE published_at
+                               END,
+                updated_at   = NOW()
+            WHERE blog_id::text = ?
+              AND author_user_id = ?
+              AND deleted_at IS NULL
+            RETURNING
+                blog_id::text, slug, title, summary, state,
+                expires_at::text
+            """;
+
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, title);
+            stmt.setString(2, slug);
+            stmt.setString(3, summary);
+
+            Array tagsArray = conn.createArrayOf("text",
+                    tags != null ? tags.toArray() : new String[0]);
+            stmt.setArray(4, tagsArray);
+
+            stmt.setString(5, visibility);
+            stmt.setString(6, state);
+
+            if (expiresDays != null) {
+                stmt.setInt(7, expiresDays);
+                stmt.setInt(8, expiresDays);
+            } else {
+                stmt.setNull(7, Types.INTEGER);
+                stmt.setNull(8, Types.INTEGER);
+            }
+
+            stmt.setString(9, state);
+            stmt.setString(10, blogId);
+            stmt.setString(11, userId);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (!rs.next()) return null;
+                return new BlogRecord(
+                        rs.getString("blog_id"),
+                        rs.getString("slug"),
+                        rs.getString("title"),
+                        rs.getString("summary"),
+                        rs.getString("state"),
+                        rs.getString("expires_at")
+                );
+            }
+        }
+    }
+
+    private void deleteBlocks(Connection conn,
+                               String blogId) throws SQLException {
+        try (PreparedStatement stmt = conn.prepareStatement(
+                "DELETE FROM blog_blocks WHERE blog_id::text = ?")) {
+            stmt.setString(1, blogId);
+            stmt.executeUpdate();
+        }
+    }
+
+    private void insertBlocks(Connection conn,
+                               String blogId,
+                               List<BlogBlock> blocks) throws SQLException {
+        if (blocks == null || blocks.isEmpty()) return;
+
+        String sql = """
+            INSERT INTO blog_blocks (
+                blog_id, block_type, position, content,
+                media_storage_key, media_url, mime_type, created_at
+            ) VALUES (?::uuid, ?, ?, ?::jsonb, ?, ?, ?, NOW())
+            """;
+
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            for (int i = 0; i < blocks.size(); i++) {
+                BlogBlock block = blocks.get(i);
+                stmt.setString(1, blogId);
+                stmt.setString(2, block.type());
+                stmt.setInt(3, i);
+
+                // Build JSON content for the block
+                String contentJson = buildBlockJson(block);
+                stmt.setString(4, contentJson);
+
+                stmt.setString(5, block.mediaStorageKey());
+                stmt.setString(6, block.mediaUrl());
+                stmt.setString(7, block.mimeType());
+                stmt.addBatch();
+            }
+            stmt.executeBatch();
+        }
+    }
+
+    private String buildBlockJson(BlogBlock block) {
+        StringBuilder json = new StringBuilder("{");
+        if (block.content() != null) {
+            json.append("\"text\":\"")
+                .append(block.content()
+                        .replace("\\", "\\\\")
+                        .replace("\"", "\\\""))
+                .append("\"");
+        }
+        if (block.language() != null) {
+            if (json.length() > 1) json.append(",");
+            json.append("\"language\":\"")
+                .append(block.language()).append("\"");
+        }
+        json.append("}");
+        return json.toString();
+    }
+
+    private void updateReadTime(Connection conn,
+                                 String blogId,
+                                 int minutes) throws SQLException {
+        try (PreparedStatement stmt = conn.prepareStatement(
+                "UPDATE blogs SET read_time_minutes = ? " +
+                "WHERE blog_id::text = ?")) {
+            stmt.setInt(1, minutes);
+            stmt.setString(2, blogId);
+            stmt.executeUpdate();
+        }
+    }
+
+    /**
+     * Estimates reading time based on word count across all text blocks.
+     * Average reading speed: 200 words per minute.
+     */
+    private int estimateReadTime(List<BlogBlock> blocks) {
+        if (blocks == null) return 1;
+        int wordCount = 0;
+        for (BlogBlock block : blocks) {
+            if (block.content() != null) {
+                wordCount += block.content().split("\\s+").length;
+            }
+        }
+        return Math.max(1, wordCount / 200);
+    }
+
+    // =========================================================================
+    // Get Blog
+    // =========================================================================
+
+    public BlogDetailRecord getBlog(String blogId, String viewerUserId) {
+        String sql = """
+            SELECT
+                b.blog_id::text,
+                b.slug,
+                b.title,
+                b.summary,
+                b.state,
+                b.visibility,
+                b.view_count,
+                b.like_count,
+                b.comment_count,
+                b.share_count,
+                b.read_time_minutes,
+                b.published_at::text,
+                b.expires_at::text,
+                b.tags,
+                b.cover_image_url,
+                u.jid           AS author_jid,
+                u.user_id       AS author_user_id,
+                u.display_name  AS author_display_name,
+                u.avatar_url    AS author_avatar_url,
+                EXISTS(
+                    SELECT 1 FROM blog_likes bl
+                    WHERE bl.blog_id = b.blog_id
+                      AND bl.user_id = ?
+                ) AS user_liked,
+                EXISTS(
+                    SELECT 1 FROM blog_bookmarks bb
+                    WHERE bb.blog_id = b.blog_id
+                      AND bb.user_id = ?
+                ) AS user_bookmarked,
+                EXISTS(
+                    SELECT 1 FROM blog_follows bf
+                    WHERE bf.following_user_id = u.user_id
+                      AND bf.follower_user_id  = ?
+                ) AS user_following_author
+            FROM blogs b
+            INNER JOIN users u ON u.user_id = b.author_user_id
+            WHERE b.blog_id::text = ?
+              AND b.deleted_at IS NULL
+            """;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, viewerUserId);
+            stmt.setString(2, viewerUserId);
+            stmt.setString(3, viewerUserId);
+            stmt.setString(4, blogId);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (!rs.next()) return null;
+
+                List<String> tags = extractTags(rs.getArray("tags"));
+                List<BlogBlock> blocks = fetchBlocks(blogId);
+
+                return new BlogDetailRecord(
+                        rs.getString("blog_id"),
+                        rs.getString("slug"),
+                        rs.getString("title"),
+                        rs.getString("summary"),
+                        rs.getString("author_jid"),
+                        rs.getString("author_user_id"),
+                        rs.getString("author_display_name"),
+                        rs.getString("author_avatar_url"),
+                        rs.getString("state"),
+                        rs.getString("visibility"),
+                        rs.getLong("view_count"),
+                        rs.getInt("like_count"),
+                        rs.getInt("comment_count"),
+                        rs.getInt("share_count"),
+                        rs.getInt("read_time_minutes"),
+                        rs.getString("published_at"),
+                        rs.getString("expires_at"),
+                        tags,
+                        blocks,
+                        rs.getString("cover_image_url"),
+                        rs.getBoolean("user_liked"),
+                        rs.getBoolean("user_bookmarked"),
+                        rs.getBoolean("user_following_author")
+                );
+            }
+        } catch (SQLException e) {
+            logger.severe("getBlog error: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private List<BlogBlock> fetchBlocks(String blogId) {
+        String sql = """
+            SELECT block_id::text, block_type, content, position,
+                   media_storage_key, media_url, mime_type
+            FROM blog_blocks
+            WHERE blog_id::text = ?
+            ORDER BY position ASC
+            """;
+
+        List<BlogBlock> blocks = new ArrayList<>();
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, blogId);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    String contentJson = rs.getString("content");
+                    String textContent = extractTextFromJson(contentJson);
+                    String language    = extractLanguageFromJson(contentJson);
+
+                    blocks.add(new BlogBlock(
+                            rs.getString("block_id"),
+                            rs.getString("block_type"),
+                            textContent,
+                            rs.getString("media_storage_key"),
+                            rs.getString("media_url"),
+                            rs.getString("mime_type"),
+                            language
+                    ));
+                }
+            }
+        } catch (SQLException e) {
+            logger.severe("fetchBlocks error: " + e.getMessage());
+        }
+
+        return blocks;
+    }
+
+    // =========================================================================
+    // List Blogs
+    // =========================================================================
+
+    public BlogListResult listBlogs(String viewerUserId,
+                                     String source,
+                                     String authorUserId,
+                                     String tag,
+                                     int limit,
+                                     int offset) {
+        String whereClause = buildListWhereClause(
+                source, viewerUserId, authorUserId, tag);
+
+        String sql = String.format("""
+            SELECT
+                b.blog_id::text,
+                b.slug,
+                b.title,
+                b.summary,
+                b.state,
+                b.visibility,
+                b.view_count,
+                b.like_count,
+                b.comment_count,
+                b.read_time_minutes,
+                b.published_at::text,
+                b.expires_at::text,
+                b.tags,
+                b.cover_image_url,
+                u.jid           AS author_jid,
+                u.display_name  AS author_display_name,
+                u.avatar_url    AS author_avatar_url,
+                EXISTS(
+                    SELECT 1 FROM blog_likes bl
+                    WHERE bl.blog_id = b.blog_id
+                      AND bl.user_id = '%s'
+                ) AS user_liked,
+                EXISTS(
+                    SELECT 1 FROM blog_bookmarks bb
+                    WHERE bb.blog_id = b.blog_id
+                      AND bb.user_id = '%s'
+                ) AS user_bookmarked,
+                COUNT(*) OVER() AS total_count
+            FROM blogs b
+            INNER JOIN users u ON u.user_id = b.author_user_id
+            %s
+            ORDER BY b.published_at DESC NULLS LAST
+            LIMIT ? OFFSET ?
+            """,
+            viewerUserId, viewerUserId, whereClause);
+
+        List<BlogSummaryRecord> blogs = new ArrayList<>();
+        long total = 0;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setInt(1, limit);
+            stmt.setInt(2, offset);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    if (total == 0) total = rs.getLong("total_count");
+                    List<String> tags = extractTags(rs.getArray("tags"));
+
+                    blogs.add(new BlogSummaryRecord(
+                            rs.getString("blog_id"),
+                            rs.getString("slug"),
+                            rs.getString("title"),
+                            rs.getString("summary"),
+                            rs.getString("author_jid"),
+                            rs.getString("author_display_name"),
+                            rs.getString("author_avatar_url"),
+                            rs.getString("state"),
+                            rs.getString("visibility"),
+                            rs.getLong("view_count"),
+                            rs.getInt("like_count"),
+                            rs.getInt("comment_count"),
+                            rs.getInt("read_time_minutes"),
+                            rs.getString("published_at"),
+                            rs.getString("expires_at"),
+                            tags,
+                            rs.getString("cover_image_url"),
+                            rs.getBoolean("user_liked"),
+                            rs.getBoolean("user_bookmarked")
+                    ));
+                }
+            }
+        } catch (SQLException e) {
+            logger.severe("listBlogs error: " + e.getMessage());
+        }
+
+        return new BlogListResult(blogs, total);
+    }
+
+    private String buildListWhereClause(String source,
+                                         String viewerUserId,
+                                         String authorUserId,
+                                         String tag) {
+        String base = "WHERE b.deleted_at IS NULL ";
+
+        return switch (source) {
+            case "own" ->
+                base + "AND b.author_user_id = '" + viewerUserId + "' ";
+
+            case "following" ->
+                base +
+                "AND b.state = 'published' " +
+                "AND (b.expires_at IS NULL OR b.expires_at > NOW()) " +
+                "AND b.author_user_id IN (" +
+                "    SELECT following_user_id FROM blog_follows " +
+                "    WHERE follower_user_id = '" + viewerUserId + "'" +
+                ") " +
+                (tag != null
+                    ? "AND '" + tag + "' = ANY(b.tags) "
+                    : "");
+
+            case "author" ->
+                base +
+                "AND b.author_user_id = '" + authorUserId + "' " +
+                "AND b.state = 'published' " +
+                "AND b.visibility = 'public' " +
+                "AND (b.expires_at IS NULL OR b.expires_at > NOW()) ";
+
+            case "bookmarks" ->
+                base +
+                "AND b.blog_id IN (" +
+                "    SELECT blog_id FROM blog_bookmarks " +
+                "    WHERE user_id = '" + viewerUserId + "'" +
+                ") " +
+                "AND b.state = 'published' ";
+
+            default -> // public feed
+                base +
+                "AND b.state = 'published' " +
+                "AND b.visibility = 'public' " +
+                "AND (b.expires_at IS NULL OR b.expires_at > NOW()) " +
+                (tag != null
+                    ? "AND '" + tag + "' = ANY(b.tags) "
+                    : "");
+        };
+    }
+
+    // =========================================================================
+    // Delete
+    // =========================================================================
+
+    public boolean deleteBlog(String blogId, String userId) {
+        String sql = """
+            UPDATE blogs
+            SET deleted_at = NOW(), state = 'deleted'
+            WHERE blog_id::text = ?
+              AND author_user_id = ?
+              AND deleted_at IS NULL
+            """;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, blogId);
+            stmt.setString(2, userId);
+            int rows = stmt.executeUpdate();
+            conn.commit();
+            return rows > 0;
+
+        } catch (SQLException e) {
+            logger.severe("deleteBlog error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    // =========================================================================
+    // Likes
+    // =========================================================================
+
+    public LikeResult toggleBlogLike(String blogId, String userId) {
+        // Try insert first
+        String insertSql = """
+            INSERT INTO blog_likes (blog_id, user_id, liked_at)
+            SELECT ?::uuid, ?, NOW()
+            WHERE EXISTS (
+                SELECT 1 FROM blogs
+                WHERE blog_id::text = ? AND deleted_at IS NULL
+            )
+            ON CONFLICT (blog_id, user_id) DO NOTHING
+            """;
+
+        String deleteSql = """
+            DELETE FROM blog_likes
+            WHERE blog_id = (SELECT blog_id FROM blogs WHERE blog_id::text = ?)
+              AND user_id = ?
+            """;
+
+        String countSql = """
+            UPDATE blogs
+            SET like_count = (
+                SELECT COUNT(*) FROM blog_likes
+                WHERE blog_id = blogs.blog_id
+            )
+            WHERE blog_id::text = ?
+            RETURNING like_count,
+            EXISTS(
+                SELECT 1 FROM blog_likes
+                WHERE blog_id = blogs.blog_id AND user_id = ?
+            ) AS user_liked
+            """;
+
+        try (Connection conn = pool.getConnection()) {
+
+            // Try to insert like
+            boolean inserted;
+            try (PreparedStatement stmt = conn.prepareStatement(insertSql)) {
+                stmt.setString(1, blogId);
+                stmt.setString(2, userId);
+                stmt.setString(3, blogId);
+                inserted = stmt.executeUpdate() > 0;
+            }
+
+            // If already liked → unlike
+            if (!inserted) {
+                try (PreparedStatement stmt = conn.prepareStatement(deleteSql)) {
+                    stmt.setString(1, blogId);
+                    stmt.setString(2, userId);
+                    stmt.executeUpdate();
+                }
+            }
+
+            // Update count and return result
+            try (PreparedStatement stmt = conn.prepareStatement(countSql)) {
+                stmt.setString(1, blogId);
+                stmt.setString(2, userId);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (!rs.next()) return null;
+                    conn.commit();
+                    return new LikeResult(
+                            rs.getBoolean("user_liked"),
+                            rs.getInt("like_count")
+                    );
+                }
+            }
+
+        } catch (SQLException e) {
+            logger.severe("toggleBlogLike error: " + e.getMessage());
+            return null;
+        }
+    }
+
+    // =========================================================================
+    // Comments
+    // =========================================================================
+
+    public CommentRecord addBlogComment(String blogId,
+                                         String userId,
+                                         String content,
+                                         String parentCommentId) {
+        String sql = """
+            INSERT INTO blog_comments (
+                blog_id, author_user_id, content,
+                parent_comment_id, created_at, updated_at
+            )
+            SELECT ?::uuid, ?, ?,
+                   ?::uuid,
+                   NOW(), NOW()
+            WHERE EXISTS (
+                SELECT 1 FROM blogs
+                WHERE blog_id::text = ? AND deleted_at IS NULL
+            )
+            RETURNING
+                comment_id::text,
+                created_at::text
+            """;
+
+        String updateCount = """
+            UPDATE blogs
+            SET comment_count = comment_count + 1
+            WHERE blog_id::text = ?
+            """;
+
+        try (Connection conn = pool.getConnection()) {
+
+            String commentId = null;
+            String createdAt = null;
+
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, blogId);
+                stmt.setString(2, userId);
+                stmt.setString(3, content);
+                if (parentCommentId != null) {
+                    stmt.setString(4, parentCommentId);
+                } else {
+                    stmt.setNull(4, Types.OTHER);
+                }
+                stmt.setString(5, blogId);
+
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (!rs.next()) return null;
+                    commentId = rs.getString("comment_id");
+                    createdAt = rs.getString("created_at");
+                }
+            }
+
+            try (PreparedStatement stmt = conn.prepareStatement(updateCount)) {
+                stmt.setString(1, blogId);
+                stmt.executeUpdate();
+            }
+
+            conn.commit();
+
+            return new CommentRecord(
+                    commentId, blogId, null, null,
+                    content, 0, parentCommentId,
+                    createdAt, createdAt, false, null
+            );
+
+        } catch (SQLException e) {
+            logger.severe("addBlogComment error: " + e.getMessage());
+            return null;
+        }
+    }
+
+    public List<CommentRecord> getBlogComments(String blogId,
+                                                String viewerUserId,
+                                                int limit,
+                                                int offset) {
+        String sql = """
+            SELECT
+                c.comment_id::text,
+                c.content,
+                c.like_count,
+                c.parent_comment_id::text,
+                c.created_at::text,
+                c.updated_at::text,
+                u.jid           AS author_jid,
+                u.display_name  AS author_display_name,
+                EXISTS(
+                    SELECT 1 FROM blog_comment_likes bcl
+                    WHERE bcl.blog_comment_id = c.comment_id
+                      AND bcl.user_id = ?
+                ) AS user_liked
+            FROM blog_comments c
+            INNER JOIN users u ON u.user_id = c.author_user_id
+            WHERE c.blog_id::text = ?
+              AND c.parent_comment_id IS NULL
+              AND c.deleted_at IS NULL
+            ORDER BY c.created_at ASC
+            LIMIT ? OFFSET ?
+            """;
+
+        List<CommentRecord> comments = new ArrayList<>();
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, viewerUserId);
+            stmt.setString(2, blogId);
+            stmt.setInt(3, limit);
+            stmt.setInt(4, offset);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    String commentId = rs.getString("comment_id");
+                    List<CommentRecord> replies =
+                            getCommentReplies(commentId, viewerUserId);
+
+                    comments.add(new CommentRecord(
+                            commentId,
+                            blogId,
+                            rs.getString("author_jid"),
+                            rs.getString("author_display_name"),
+                            rs.getString("content"),
+                            rs.getInt("like_count"),
+                            rs.getString("parent_comment_id"),
+                            rs.getString("created_at"),
+                            rs.getString("updated_at"),
+                            rs.getBoolean("user_liked"),
+                            replies
+                    ));
+                }
+            }
+
+        } catch (SQLException e) {
+            logger.severe("getBlogComments error: " + e.getMessage());
+        }
+
+        return comments;
+    }
+
+    private List<CommentRecord> getCommentReplies(String parentId,
+                                                   String viewerUserId) {
+        String sql = """
+            SELECT
+                c.comment_id::text,
+                c.content,
+                c.like_count,
+                c.created_at::text,
+                u.jid AS author_jid,
+                u.display_name AS author_display_name,
+                EXISTS(
+                    SELECT 1 FROM blog_comment_likes bcl
+                    WHERE bcl.blog_comment_id = c.comment_id
+                      AND bcl.user_id = ?
+                ) AS user_liked
+            FROM blog_comments c
+            INNER JOIN users u ON u.user_id = c.author_user_id
+            WHERE c.parent_comment_id::text = ?
+              AND c.deleted_at IS NULL
+            ORDER BY c.created_at ASC
+            LIMIT 5
+            """;
+
+        List<CommentRecord> replies = new ArrayList<>();
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, viewerUserId);
+            stmt.setString(2, parentId);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    replies.add(new CommentRecord(
+                            rs.getString("comment_id"),
+                            null,
+                            rs.getString("author_jid"),
+                            rs.getString("author_display_name"),
+                            rs.getString("content"),
+                            rs.getInt("like_count"),
+                            parentId,
+                            rs.getString("created_at"),
+                            rs.getString("created_at"),
+                            rs.getBoolean("user_liked"),
+                            null
+                    ));
+                }
+            }
+        } catch (SQLException e) {
+            logger.warning("getCommentReplies error: " + e.getMessage());
+        }
+
+        return replies;
+    }
+
+    // =========================================================================
+    // Bookmarks
+    // =========================================================================
+
+    public boolean toggleBlogBookmark(String blogId, String userId) {
+        String insertSql = """
+            INSERT INTO blog_bookmarks (blog_id, user_id, bookmarked_at)
+            VALUES (?::uuid, ?, NOW())
+            ON CONFLICT (user_id, blog_id) DO NOTHING
+            """;
+
+        String deleteSql = """
+            DELETE FROM blog_bookmarks
+            WHERE blog_id = ?::uuid AND user_id = ?
+            """;
+
+        try (Connection conn = pool.getConnection()) {
+
+            try (PreparedStatement stmt = conn.prepareStatement(insertSql)) {
+                stmt.setString(1, blogId);
+                stmt.setString(2, userId);
+                boolean inserted = stmt.executeUpdate() > 0;
+                conn.commit();
+                if (inserted) return true;
+            }
+
+            // Was already bookmarked → remove
+            try (PreparedStatement stmt = conn.prepareStatement(deleteSql)) {
+                stmt.setString(1, blogId);
+                stmt.setString(2, userId);
+                stmt.executeUpdate();
+                conn.commit();
+            }
+
+            return false;
+
+        } catch (SQLException e) {
+            logger.severe("toggleBlogBookmark error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    // =========================================================================
+    // Follow
+    // =========================================================================
+
+    public boolean toggleBlogFollow(String followerUserId,
+                                     String followingUserId) {
+        String insertSql = """
+            INSERT INTO blog_follows (follower_user_id, following_user_id, followed_at)
+            VALUES (?, ?, NOW())
+            ON CONFLICT (follower_user_id, following_user_id) DO NOTHING
+            """;
+
+        String deleteSql = """
+            DELETE FROM blog_follows
+            WHERE follower_user_id = ? AND following_user_id = ?
+            """;
+
+        try (Connection conn = pool.getConnection()) {
+
+            try (PreparedStatement stmt = conn.prepareStatement(insertSql)) {
+                stmt.setString(1, followerUserId);
+                stmt.setString(2, followingUserId);
+                boolean inserted = stmt.executeUpdate() > 0;
+                conn.commit();
+                if (inserted) return true;
+            }
+
+            try (PreparedStatement stmt = conn.prepareStatement(deleteSql)) {
+                stmt.setString(1, followerUserId);
+                stmt.setString(2, followingUserId);
+                stmt.executeUpdate();
+                conn.commit();
+            }
+
+            return false;
+
+        } catch (SQLException e) {
+            logger.severe("toggleBlogFollow error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    // =========================================================================
+    // Views
+    // =========================================================================
+
+    public void recordBlogView(String blogId, String userId) {
+        String insertView = """
+            INSERT INTO blog_views (blog_id, viewer_user_id, viewed_at)
+            VALUES (?::uuid, ?, NOW())
+            ON CONFLICT (blog_id, viewer_user_id) DO NOTHING
+            """;
+
+        String updateCount = """
+            UPDATE blogs
+            SET view_count = (
+                SELECT COUNT(*) FROM blog_views WHERE blog_id = blogs.blog_id
+            )
+            WHERE blog_id::text = ?
+            """;
+
+        try (Connection conn = pool.getConnection()) {
+
+            try (PreparedStatement stmt = conn.prepareStatement(insertView)) {
+                stmt.setString(1, blogId);
+                stmt.setString(2, userId);
+                stmt.executeUpdate();
+            }
+
+            try (PreparedStatement stmt = conn.prepareStatement(updateCount)) {
+                stmt.setString(1, blogId);
+                stmt.executeUpdate();
+            }
+
+            conn.commit();
+
+        } catch (SQLException e) {
+            logger.warning("recordBlogView error: " + e.getMessage());
+        }
+    }
+
+    // =========================================================================
+    // Notifications helpers
+    // =========================================================================
+
+    public List<String> getBlogFollowerJids(String authorUserId) {
+        String sql = """
+            SELECT u.jid
+            FROM blog_follows bf
+            INNER JOIN users u ON u.user_id = bf.follower_user_id
+            WHERE bf.following_user_id = ?
+              AND u.active = true
+              AND u.deleted_at IS NULL
+            """;
+
+        List<String> jids = new ArrayList<>();
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, authorUserId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) jids.add(rs.getString("jid"));
+            }
+
+        } catch (SQLException e) {
+            logger.warning("getBlogFollowerJids error: " + e.getMessage());
+        }
+
+        return jids;
+    }
+
+    public String getBlogAuthorJid(String blogId) {
+        String sql = """
+            SELECT u.jid
+            FROM blogs b
+            INNER JOIN users u ON u.user_id = b.author_user_id
+            WHERE b.blog_id::text = ?
+            """;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, blogId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                return rs.next() ? rs.getString("jid") : null;
+            }
+
+        } catch (SQLException e) {
+            logger.warning("getBlogAuthorJid error: " + e.getMessage());
+            return null;
+        }
+    }
+
+    public boolean areContacts(String userIdA, String userIdB) {
+        String sql = """
+            SELECT 1 FROM roster_items
+            WHERE owner_user_id   = ?
+              AND contact_user_id = ?
+              AND subscription IN ('to', 'both')
+              AND blocked = false
+            """;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, userIdA);
+            stmt.setString(2, userIdB);
+            try (ResultSet rs = stmt.executeQuery()) {
+                return rs.next();
+            }
+
+        } catch (SQLException e) {
+            return false;
+        }
+    }
+
+    // =========================================================================
+    // Helpers
+    // =========================================================================
+
+    private List<String> extractTags(Array sqlArray) {
+        if (sqlArray == null) return new ArrayList<>();
+        try {
+            String[] arr = (String[]) sqlArray.getArray();
+            return new ArrayList<>(Arrays.asList(arr));
+        } catch (SQLException e) {
+            return new ArrayList<>();
+        }
+    }
+
+    private String extractTextFromJson(String json) {
+        if (json == null) return null;
+        int start = json.indexOf("\"text\":\"");
+        if (start == -1) return null;
+        start += 8;
+        int end = json.indexOf("\"", start);
+        if (end == -1) return null;
+        return json.substring(start, end)
+                .replace("\\n", "\n")
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\");
+    }
+
+    private String extractLanguageFromJson(String json) {
+        if (json == null) return null;
+        int start = json.indexOf("\"language\":\"");
+        if (start == -1) return null;
+        start += 12;
+        int end = json.indexOf("\"", start);
+        if (end == -1) return null;
+        return json.substring(start, end);
+    }
+}

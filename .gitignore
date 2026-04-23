@@ -1,0 +1,41 @@
+# Ignore Gradle project-specific cache directory
+.gradle
+.vscode
+.idea
+
+# Ignore Gradle build output directory
+build
+
+/app/credentials.json
+/app/config.properties
+/app/prod_credentials.json
+/app/bin/*
+PROMPT2.md
+PROMPT3.md
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local config
+local.properties
+
+# Gradle wrapper (keep JAR, ignore others if needed)
+!gradle/wrapper/gradle-wrapper.jar
+
+# Android build
+*.apk
+*.ap_
+*.aab
+
+# Generated files
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Keystore files (important!)
+*.jks
+*.keystore

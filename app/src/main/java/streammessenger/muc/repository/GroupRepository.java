@@ -1,13 +1,21 @@
 package streammessenger.muc.repository;
 
-import com.xmpp.db.ConnectionPool;
-import com.xmpp.muc.model.*;
+import org.slf4j.LoggerFactory;
 
 import java.security.SecureRandom;
 import java.sql.*;
 import java.time.Instant;
 import java.util.*;
 import java.util.logging.Logger;
+
+import streammessenger.db.ConnectionPool;
+import streammessenger.db.DatabaseManager;
+import streammessenger.muc.handler.GroupStanzaHandler;
+import streammessenger.muc.model.Affiliation;
+import streammessenger.muc.model.GroupRoom;
+import streammessenger.muc.model.GroupSettings;
+import streammessenger.muc.model.GroupVisibility;
+import streammessenger.muc.service.InvitationService;
 
 /**
  * JDBC-based repository for group operations.
@@ -24,6 +32,7 @@ public final class GroupRepository {
             Logger.getLogger(GroupRepository.class.getName());
 
     private static final SecureRandom secureRandom = new SecureRandom();
+    private static final org.slf4j.Logger log = LoggerFactory.getLogger(GroupRepository.class);
 
     private final ConnectionPool pool;
     private final String mucDomain;
@@ -49,16 +58,29 @@ public final class GroupRepository {
     // Create group
     // =========================================================================
 
+    private String generateGroupIdCompat(){
+        byte[] bytes = new byte[4];
+        secureRandom.nextBytes(bytes);
+
+        StringBuilder sb = new StringBuilder("gr_");
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+
+        String candidate = sb.toString(); // e.g. "gr_7f3a9b2c"
+
+        return candidate;
+    }
     /**
      * Creates a new group with default settings.
      * Creator is automatically added as owner.
-     *
+     * <p>
      * Transaction:
      *   1. INSERT INTO groups
      *   2. INSERT INTO group_settings (defaults)
      *   3. INSERT INTO group_members (creator as owner)
      *   4. INSERT INTO group_events (group_created)
-     *
+     * <p>
      * All-or-nothing - any failure rolls back everything.
      */
     public GroupRecord createGroup(String name,
@@ -67,7 +89,7 @@ public final class GroupRepository {
                                     GroupVisibility visibility,
                                     int maxMembers) {
 
-        String groupId = generateGroupId();
+        String groupId = generateGroupIdCompat();
         String jid     = groupId + "@" + mucDomain;
 
         Connection conn = null;
@@ -130,7 +152,7 @@ public final class GroupRepository {
 
             conn.commit();
 
-            logger.info("Group created: groupId=" + groupId
+            logger.info("1: Group created: groupId=" + groupId
                     + " creator=" + creatorUserId);
 
             return new GroupRecord(
@@ -214,12 +236,17 @@ public final class GroupRepository {
     // =========================================================================
 
     public MemberRecord getMember(String groupId, String userId) {
-        String sql = """
+        /*String sql = """
             SELECT user_id, user_jid, affiliation, nickname,
                    joined_at, last_active_at, muted_until, left_at
             FROM group_members
             WHERE group_id = ? AND user_id = ? AND left_at IS NULL
-            """;
+            """;*/
+
+        String sql = """
+                SELECT m.user_id, m.user_jid, m.affiliation, m.nickname, m.joined_at, m.last_active_at, m.muted_until, u.avatar_url, u.display_name, u.phone_number, u.display_status FROM group_members AS m
+                INNER JOIN users AS u ON m.user_id = u.user_id WHERE m.group_id = ? AND m.user_id = ? AND m.left_at IS NULL?
+                """;
 
         try (Connection conn = pool.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
@@ -238,6 +265,10 @@ public final class GroupRepository {
 
     public List<MemberRecord> listMembers(String groupId, int limit, int offset) {
         String sql = """
+                SELECT m.user_id, m.user_jid, m.affiliation, m.nickname, m.joined_at, m.last_active_at, m.muted_until, u.avatar_url, u.display_name, u.phone_number, u.display_status FROM group_members AS m
+                INNER JOIN users AS u ON m.user_id = u.user_id WHERE m.group_id = ? ORDER BY FIELD(affiliation, 'owner', 'admin', 'member', 'outcast'), joined_at ASC LIMIT ?, OFFSET ?
+                """;
+        /*String sql = """
             SELECT user_id, user_jid, affiliation, nickname,
                    joined_at, last_active_at, muted_until, left_at
             FROM group_members
@@ -246,7 +277,7 @@ public final class GroupRepository {
                 FIELD(affiliation, 'owner', 'admin', 'member', 'outcast'),
                 joined_at ASC
             LIMIT ? OFFSET ?
-            """;
+            """;*/
 
         List<MemberRecord> members = new ArrayList<>();
 
@@ -269,16 +300,15 @@ public final class GroupRepository {
 
     /**
      * Adds a member to the group.
-     *
+     * <p>
      * Uses INSERT ... ON DUPLICATE KEY UPDATE to handle the case where
      * the user was previously removed (left_at IS NOT NULL).
-     *
+     * <p>
      * Returns true if a NEW member was added (count should increment).
      */
     public boolean addMember(String groupId, String userId,
                               String userJid, Affiliation affiliation,
                               String invitedByUserId) {
-
         Connection conn = null;
         try {
             conn = pool.getConnection();
@@ -336,6 +366,224 @@ public final class GroupRepository {
             closeQuietly(conn);
         }
     }
+
+    /**
+     * Adds a member to the group.
+     * <p>
+     * Uses INSERT ... ON DUPLICATE KEY UPDATE to handle the case where
+     * the user was previously removed (left_at IS NOT NULL).
+     * <p>
+     * Returns true if a NEW member was added (count should increment).
+     */
+    public boolean addMemberJoinViaLink(String groupId, String userId,
+                             String userJid, Affiliation affiliation) {
+        Connection conn = null;
+        try {
+            conn = pool.getConnection();
+            conn.setAutoCommit(false);
+
+            String memberSql = """
+                INSERT INTO group_members (
+                    group_id, user_id, user_jid, affiliation,
+                    joined_at
+                ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP(6))
+                ON DUPLICATE KEY UPDATE
+                    affiliation         = VALUES(affiliation),
+                    joined_at           = CURRENT_TIMESTAMP(6),
+                    left_at             = NULL,
+                    removed_by_user_id  = NULL
+                """;
+
+            int rows;
+            try (PreparedStatement stmt = conn.prepareStatement(memberSql)) {
+                stmt.setString(1, groupId);
+                stmt.setString(2, userId);
+                stmt.setString(3, userJid);
+                stmt.setString(4, affiliation.xmlValue());
+                rows = stmt.executeUpdate();
+            }
+
+            // MySQL returns 1 for INSERT, 2 for UPDATE on ON DUPLICATE KEY
+            boolean isNew = (rows == 1);
+
+            // Increment member count if truly new
+            if (isNew) {
+                try (PreparedStatement stmt = conn.prepareStatement(
+                        "UPDATE `groups` SET member_count = member_count + 1 " +
+                                "WHERE group_id = ?")) {
+                    stmt.setString(1, groupId);
+                    stmt.executeUpdate();
+                }
+            }
+
+            insertEvent(conn, groupId, "member_added",
+                    null, userId,
+                    String.format("{\"affiliation\":\"%s\"}",
+                            affiliation.xmlValue()));
+
+            conn.commit();
+            return isNew;
+
+        } catch (SQLException e) {
+            rollbackQuietly(conn);
+            logger.severe("addMember error: " + e.getMessage());
+            throw new RuntimeException("Failed to add member", e);
+        } finally {
+            closeQuietly(conn);
+        }
+    }
+
+    public GroupStanzaHandler.GroupInviteInfo groupInviteInfo(String userId, String linkToken){
+
+        String sql = """
+                SELECT g.group_id, g.jid, g.name, g.description,
+                    g.avatar_url, g.state, g.visibility, g.persistent,
+                    g.member_count, g.max_members, g.created_at, g.deleted_at, g.updated_at,
+                    g.creator_user_id,
+                    jl.revoked, jl.expires_at, jl.one_time, jl.used,
+                    jl.use_count, jl.max_uses,
+                
+                    gs.only_admins_can_send, gs.only_admins_can_edit_meta, gs.only_admins_can_add,
+                    gs.membership_approval, gs.announcement_mode, gs.allow_history,
+                    gs.history_max_messages, gs.disappearing_seconds,gs.updated_by_user_id AS settings_updated_by_user_id,
+                    gs.updated_at AS settings_updated_at,
+                
+                    u.display_name AS creator_display_name,
+                    u.user_id AS creator_user_id,
+                    u.id AS creator_id,
+                    u.jid AS creator_jid,
+                    u.avatar_url AS creator_avatar_url,
+                
+                    EXISTS (
+                        SELECT 1
+                        FROM group_members gm
+                        WHERE gm.group_id = g.group_id
+                          AND gm.user_id = ?
+                          AND gm.left_at IS NULL
+                          AND gm.affiliation <> 'outcast'
+                    ) AS is_member,
+                
+                    EXISTS (
+                        SELECT 1
+                        FROM group_members gm
+                        WHERE gm.group_id = g.group_id
+                          AND gm.user_id = ?
+                          AND gm.affiliation = 'outcast'
+                    ) AS is_banned
+                
+                FROM group_join_links jl
+                INNER JOIN `groups` g
+                    ON g.group_id = jl.group_id
+                
+                LEFT JOIN group_settings gs
+                    ON gs.group_id = g.group_id
+                
+                LEFT JOIN users u
+                    ON u.user_id = g.creator_user_id
+                
+                WHERE jl.link_token = ?
+                  AND g.deleted_at IS NULL;
+                """;
+
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setString(1, userId);
+            stmt.setString(2, userId);
+            stmt.setString(3, linkToken);
+
+            ResultSet rs = stmt.executeQuery();
+            if(rs.next()){
+                GroupSettings groupSettings =
+                        new GroupSettings(rs.getBoolean("only_admins_can_send"), rs.getBoolean("only_admins_can_edit_meta"),
+                        rs.getBoolean("only_admins_can_add"), rs.getBoolean("membership_approval"), rs.getBoolean("announcement_mode"), false, 0, rs.getInt("disappearing_seconds"));
+
+                GroupRecord groupRecord = new GroupRecord(rs.getString("group_id"), rs.getString("jid"),
+                        rs.getString("name"), rs.getString("description"), rs.getString("avatar_url"),
+                        rs.getString("creator_user_id"), GroupVisibility.fromString(rs.getString("visibility")),
+                        rs.getInt("max_members"), rs.getInt("member_count"), rs.getTimestamp("created_at").toInstant(),  rs.getTimestamp("created_at").toInstant());
+
+                DatabaseManager.UserRecord userRecord = new DatabaseManager.UserRecord(rs.getLong("creator_id"), rs.getString("creator_user_id"),
+                        rs.getString("creator_jid"), rs.getString("creator_display_name"), rs.getString("creator_avatar_url"), true);
+
+                GroupStanzaHandler.JoinLinkInfo joinLink = new GroupStanzaHandler.JoinLinkInfo(
+                        rs.getBoolean("revoked"), Instant.now(), rs.getBoolean("one_time"),
+                        rs.getBoolean("used"), rs.getInt("use_count"),
+                        rs.getInt("max_uses")
+                );
+                return new GroupStanzaHandler.GroupInviteInfo(
+                        groupRecord, groupSettings, joinLink, userRecord,
+                        rs.getBoolean("is_member"),
+                        rs.getBoolean("is_banned")
+                );
+            }
+        } catch (SQLException exception){
+            logger.info("groupInviteInfo error: "+exception.getMessage());
+            return null;
+        }
+        return null;
+    }
+    public GroupStanzaHandler.GroupPreview previewGroupViaLink(String linkToken, String userId) {
+        String sql = """
+        SELECT g.group_id, g.name, g.description, g.avatar_url,
+               g.visibility, g.member_count, g.max_members,
+               g.creator_user_id,
+               jl.revoked, jl.expires_at,
+               jl.one_time, jl.used, jl.use_count, jl.max_uses,
+               (SELECT COUNT(*) FROM group_members
+                WHERE group_id = g.group_id AND user_id = ?
+                AND left_at IS NULL
+                AND affiliation != 'outcast') AS is_member,
+               (SELECT COUNT(*) FROM group_members
+                WHERE group_id = g.group_id AND user_id = ?
+                AND affiliation = 'outcast') AS is_banned,
+               (SELECT display_name FROM users
+                WHERE user_id = g.creator_user_id) AS creator_name
+        FROM group_join_links jl
+        INNER JOIN `groups` g ON g.group_id = jl.group_id
+        WHERE jl.link_token = ?
+          AND g.deleted_at IS NULL
+        """;
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, userId);
+            stmt.setString(2, userId);
+            stmt.setString(3, linkToken);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (!rs.next()) return null;
+                // Check if link is still valid
+                boolean revoked = rs.getBoolean("revoked");
+                Timestamp expiresAt = rs.getTimestamp("expires_at");
+                boolean oneTime = rs.getBoolean("one_time");
+                boolean used    = rs.getBoolean("used");
+                int useCount    = rs.getInt("use_count");
+                //int maxUses = rs.getInt("max_uses");
+
+                //boolean linkValid = !revoked && (expiresAt == null || expiresAt.toInstant().isAfter(Instant.now())) && !(oneTime && used) && useCount < maxUses;
+
+                return new GroupStanzaHandler.GroupPreview(
+                        rs.getString("group_id"),
+                        rs.getString("name"),
+                        rs.getString("description"),
+                        rs.getString("avatar_url"),
+                        rs.getString("visibility"),
+                        rs.getInt("member_count"),
+                        rs.getInt("max_members"),
+                        rs.getInt("is_member") > 0,
+                        rs.getInt("is_banned") > 0,
+                        //linkValid,
+                        true,
+                        expiresAt != null ? expiresAt.toInstant() : null,
+                        rs.getString("creator_name")
+                );
+            }
+        } catch (SQLException e) {
+            logger.severe("previewGroupViaLink error: " + e.getMessage());
+            return null;
+        }
+    }
+
 
     /**
      * Removes a member (soft delete - sets left_at).
@@ -576,6 +824,7 @@ public final class GroupRepository {
                 rs.getString("user_jid"),
                 Affiliation.fromXml(rs.getString("affiliation")),
                 rs.getString("nickname"),
+                rs.getString("avatar_url"), rs.getString("display_name"), rs.getString("phone_number"), rs.getString("display_status"),
                 rs.getTimestamp("joined_at").toInstant(),
                 mutedUntil != null ? mutedUntil.toInstant() : null
         );
@@ -611,6 +860,6 @@ public final class GroupRepository {
 
     public record MemberRecord(
             String userId, String userJid, Affiliation affiliation,
-            String nickname, Instant joinedAt, Instant mutedUntil
+            String nickname, String avatar_url, String display_name, String phone_number, String status,Instant joinedAt, Instant mutedUntil
     ) {}
 }

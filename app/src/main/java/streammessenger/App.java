@@ -3,9 +3,11 @@ package streammessenger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.Map;
 import java.util.logging.Logger;
 
 
+import streammessenger.api.CloudinarySlotManager;
 import streammessenger.auth.FirebaseSetup;
 import streammessenger.config.ServerConfig;
 
@@ -20,8 +22,6 @@ import java.util.logging.*;
  *   DB_PASSWORD        - MySQL password
  */
 public final class App {
-
-    private static final org.slf4j.Logger log = LoggerFactory.getLogger(App.class);
 
     public static void main(String[] args) {
         Logger logger = Logger.getLogger(App.class.getName());
@@ -46,6 +46,8 @@ public final class App {
                     .setAddress(config.getAddress())
                     .setConfig(config)
                     .build();
+
+
 
             server.start(); // Blocks until shutdown signal
 

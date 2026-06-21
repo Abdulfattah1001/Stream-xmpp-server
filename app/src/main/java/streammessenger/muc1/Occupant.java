@@ -1,4 +1,4 @@
-package streammessenger.muc;
+package streammessenger.muc1;
 
 /**
  * A user who is currently *present* in a room (has an active session).

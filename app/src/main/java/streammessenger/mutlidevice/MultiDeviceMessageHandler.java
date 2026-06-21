@@ -133,7 +133,7 @@ public final class MultiDeviceMessageHandler {
                 buildSingleDeviceStanza(messageId, sender.getContactId(),
                         toContactId, payload),
                 sender.getContactId(),
-                sender.getUid(),
+                sender.getSessionId(),
                 messageId,
                 java.time.Instant.now().toString()
         );

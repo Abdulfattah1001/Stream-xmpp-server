@@ -1,4 +1,4 @@
-package streammessenger.muc;
+package streammessenger.muc1;
 
 /**
  * Centralised XEP-0045 namespace + element name constants.

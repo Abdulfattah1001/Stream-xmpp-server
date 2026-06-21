@@ -9,27 +9,28 @@ import java.util.logging.Logger;
 
 /**
  * AES-256-GCM encryption for phone numbers at rest.
- *
+ * <p>
  * WHY ENCRYPT PHONE NUMBERS:
- * ───────────────────────────
+ * ─────────────────────────── <p>
  * Even though we hash phone numbers for lookups, we also store
  * the original number for:
  *   - Account recovery
  *   - Displaying to the user their own number
  *   - OTP re-verification if needed
- *
+ * <p>
  * If the DB is stolen, unencrypted phone numbers are PII (GDPR violation).
  * With AES-256-GCM: stolen DB reveals nothing about phone numbers.
- *
+ * <p>
  * KEY MANAGEMENT:
  * ────────────────
+ * <p>
  * The encryption key is NEVER stored in the database.
  * It lives in an environment variable (dev) or KMS (production).
- *
+ * <p>
  * In production, use:
- *   AWS KMS:          aws-encryption-sdk-java
- *   Google Cloud KMS: google-cloud-kms
- *   HashiCorp Vault:  vault-java-driver
+ *   AWS KMS:          aws-encryption-sdk-java<p>
+ *   Google Cloud KMS: google-cloud-kms<p>
+ *   HashiCorp Vault:  vault-java-driver<p>
  * <p>
  * For now: key from environment variable PHONE_ENCRYPTION_KEY (32 bytes, hex)
  * <p>
@@ -60,10 +61,10 @@ public final class PhoneEncryption {
     /**
      * Initializes the encryption service from the environment variable.
      * Must be called once at server startup before any DB operations.
-     *
+     * <p>
      * Set the key:
      *   export PHONE_ENCRYPTION_KEY=$(openssl rand -hex 32)
-     *
+     * <p>
      * The key is 64 hex chars = 32 bytes = 256-bit AES key.
      */
     public static synchronized PhoneEncryption initialize() {
@@ -182,7 +183,7 @@ public final class PhoneEncryption {
     /**
      * Re-encrypts a phone number with a new key.
      * Used during key rotation to migrate all stored numbers.
-     *
+     * <p>
      * Steps for key rotation:
      *   1. Set NEW_PHONE_ENCRYPTION_KEY env var
      *   2. Call rotateKey() for each user record

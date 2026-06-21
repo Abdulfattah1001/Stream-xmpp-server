@@ -17,13 +17,15 @@ import streammessenger.session.Session;
 import streammessenger.session.SessionRegistry;
 
 /**
+ * @author abdulfattah
+ * @date Thu Apr 23 10:10PM
  * Handles <message> stanzas.
- * 
+ * <p>
  * Routing logic:
  * 1. If recipient is online -> deliver directly via their session's writeXML
  * 2. If recipient is offline -> store in database for later delivery
- * 3. If recipient doesn't exist -> send error back to sender
- *
+ * 3. If recipient doesn't exist -> send error back to sender [This shouldn't happened on a normal ground]
+ * <p>
  * Stateless - safe to share as a singleton.
  */
 public final class MessageHandler implements StanzaHandler {
@@ -35,9 +37,8 @@ public final class MessageHandler implements StanzaHandler {
     private final ServerMetrics metrics;
 
     private static final String E2EE_NS     = "urn:xmpp:e2ee:0";
-    private static final String RECEIPTS_NS = "urn:xmpp:receipts";
+    private static final String RECEIPTS_NS = "urn:xmpp:receipts"; //For user request receipt which would be set at the sender side equivalent to WhatsApp receipt urn off / or
     private static final String CHAT_NS     = "http://jabber.org/protocol/chatstates";
-
 
     public MessageHandler(SessionRegistry registry, DatabaseManager db, ServerMetrics metrics) {
         this.registry = registry;
@@ -48,14 +49,14 @@ public final class MessageHandler implements StanzaHandler {
     @Override
     public void handle(StartElement element, XMLEventReader reader, Session senderSession) {
         if (!senderSession.isAuthenticated()) {
-            logger.warning("Unauthenticated message attempt from uid=" + senderSession.getUid());
+            logger.warning("Unauthenticated message attempt from uid=" + senderSession.getSessionId());
             senderSession.writeXML(buildNotAuthorizedError());
             consumeElement(reader);
             return;
         }
 
         String to = getAttr(element, "to");
-        String type = getAttr(element, "type");
+        String type = getAttr(element, "type"); //chat | media | group
         String stanzaId = getAttr(element, "id");
         if (stanzaId == null) stanzaId = UUID.randomUUID().toString();
 
@@ -65,7 +66,10 @@ public final class MessageHandler implements StanzaHandler {
             return;
         }
 
+        senderSession.touchActivity();
+
         // Extract bare JID from to (strip resource if present)
+        logger.info("Receiver is: "+to);
         String toContactId = to.contains("/") ? to.substring(0, to.indexOf('/')) : to;
 
         String body = extractBody(reader);
@@ -94,11 +98,10 @@ public final class MessageHandler implements StanzaHandler {
                 storeOffline(fromJid, toContactId, body, stanzaId);
             } else {
                 // Recipient doesn't exist
+                logger.info("Receiver doesn't exist...");
                 senderSession.writeXML(buildRecipientNotFoundError(stanzaId, to));
             }
         }
-
-        //TODO: Notify the sender of the <message></message> being in the hand of the server
     }
 
     private void storeOffline(String fromJid, String toContactId, String body, String stanzaId) {
@@ -228,7 +231,7 @@ public final class MessageHandler implements StanzaHandler {
 
             delivered = recipientSession.get().writeXML(stanzaXml);
             if (delivered) {
-                deliveredToUid = recipientSession.get().getUid();
+                deliveredToUid = recipientSession.get().getSessionId();
             }
         }
 
@@ -284,7 +287,7 @@ public final class MessageHandler implements StanzaHandler {
 
             delivered = recipientSession.get().writeXML(stanzaXml);
             if (delivered) {
-                deliveredToUid = recipientSession.get().getUid();
+                deliveredToUid = recipientSession.get().getSessionId();
             }
         }
 
@@ -324,7 +327,7 @@ public final class MessageHandler implements StanzaHandler {
             carbons.fanoutSentCarbon(
                     stanzaXml,
                     sender.getContactId(),
-                    sender.getUid(),
+                    sender.getSessionId(),
                     messageId,
                     timestamp
             );
@@ -347,6 +350,7 @@ public final class MessageHandler implements StanzaHandler {
      * Sent even for offline messages (confirms storage).
      */
     private void sendServerReceipt(Session sender, String messageId) {
+        logger.info("Sending server receipt to the sender....");
         sender.writeXML(String.format(
                 "<message id='%s' to='%s'>" +
                         "<received xmlns='%s' id='%s'/>" +
@@ -479,8 +483,35 @@ public final class MessageHandler implements StanzaHandler {
         // Request delivery receipt
         sb.append(String.format(
                 "<request xmlns='%s'/>", RECEIPTS_NS));
-
         sb.append("</message>");
         return sb.toString();
     }
 }
+
+
+/**
+ * <message to='recipient_user@yourdomain.com' type='chat' id='msg_media_9921'>
+ *   <!-- Fallback body text for ancient clients that don't support inline media previews -->
+ *   <body>Sent a video preview.</body>
+ *
+ *   <!-- The Metadata Payload Container -->
+ *   <media-sharing xmlns='urn:xmpp:sims:1'>
+ *     <file xmlns='urn:xmpp:file:metadata:0'>
+ *       <!-- Core URL Source Route -->
+ *       <url>https://res.cloudinary.com/dhsnoieuh/video/upload/v1779285850/chat_media/user_abc/video_101.mp4</url>
+ *
+ *       <!-- Crucial UX Metadata -->
+ *       <name>video_101.mp4</name>
+ *       <size>4521090</size> <!-- Size in Bytes (Approx 4.3 MB) -->
+ *       <media-type>video/mp4</media-type>
+ *
+ *       <!-- Specialized Visual Dimensions & Playback Attributes -->
+ *       <dimensions>1080x1920</dimensions> <!-- Width x Height for Aspect Ratio layout parsing -->
+ *       <duration>14</duration> <!-- Duration in Seconds if it's a video -->
+ *
+ *       <!-- WhatsApp Style Blur Placeholder -->
+ *       <blurhash>L6PZg:e._3NX_4ofE1Rj%MWB4mRj</blurhash>
+ *     </file>
+ *   </media-sharing>
+ * </message>
+ */

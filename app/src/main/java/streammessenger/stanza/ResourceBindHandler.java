@@ -1,6 +1,7 @@
 package streammessenger.stanza;
 
 
+import java.util.UUID;
 import java.util.logging.Logger;
 
 import javax.xml.stream.XMLEventReader;
@@ -19,27 +20,27 @@ import java.util.List;
 
 /**
  * Handles resource binding (RFC 6120 §7).
- *
+ * <p>
  * Resource binding is the final step before a session is fully operational.
  * It happens after authentication, when the client sends:
- *
+ * <p>
  *   <iq type='set' id='bind1'>
  *     <bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'>
  *       <resource>mobile</resource>   ← optional
  *     </bind>
  *   </iq>
- *
+ * <p>
  * Server responds with the full JID:
- *
+ * <p>
  *   <iq type='result' id='bind1'>
  *     <bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'>
  *       <jid>alice@domain.com/mobile</jid>
  *     </bind>
  *   </iq>
- *
+ * <p>
  * After this the session is FULLY READY for stanza exchange.
  * We also deliver any pending offline messages and subscription requests.
- *
+ * <p>
  * Stateless singleton.
  */
 public final class ResourceBindHandler implements StanzaHandler {
@@ -48,6 +49,8 @@ public final class ResourceBindHandler implements StanzaHandler {
             Logger.getLogger(ResourceBindHandler.class.getName());
 
     private static final String BIND_NS = "urn:ietf:params:xml:ns:xmpp-bind";
+    private static final String RECEIPTS_NS = "urn:xmpp:receipts";
+    private static final String E2EE_NS     = "urn:xmpp:e2ee:0";
     private static final int MAX_RESOURCE_LENGTH = 1023;
     private static final SecureRandom secureRandom = new SecureRandom();
 
@@ -90,6 +93,7 @@ public final class ResourceBindHandler implements StanzaHandler {
 
         // Bind the resource to the session
         session.setResource(resource);
+        //TODO: registerDevice(session, resource, DeviceManager);
         String fullJid = session.getJid();
 
         // Confirm the binding
@@ -103,19 +107,16 @@ public final class ResourceBindHandler implements StanzaHandler {
                 escapeXml(fullJid)
         ));
 
-        logger.info("Resource bound: " + fullJid + " uid=" + session.getUid());
+        logger.info("Resource bound: " + fullJid + " uid=" + session.getSessionId());
 
         // Session is now fully operational
         // Deliver anything that was waiting for this user
-        deliverPendingItems(session);
+        //deliverPendingItems(session);
     }
-
-    // Add to handleBind() after session.setResource(resource):
 
     // Register this device in the device registry
     private void registerDevice(Session session,
                                 String resource,
-                                DatabaseManager db,
                                 DeviceManager deviceManager) {
 
         String userId = extractUserId(session.getContactId());
@@ -137,7 +138,7 @@ public final class ResourceBindHandler implements StanzaHandler {
         if (device != null) {
             session.setDeviceId(device.deviceId());
             logger.fine("Device registered on bind: deviceId="
-                    + device.deviceId() + " uid=" + session.getUid());
+                    + device.deviceId() + " uid=" + session.getSessionId());
         }
     }
 
@@ -167,13 +168,12 @@ public final class ResourceBindHandler implements StanzaHandler {
      * After resource binding, deliver everything that was held for this user:
      *  1. Offline messages (stored while they were logged out)
      *  2. Pending subscription requests (friend requests received while offline)
-     *
+     * <p>
      * These are delivered in order: subscriptions first (so roster is up to date)
      * then messages (so they appear after the contact list is current).
      */
     private void deliverPendingItems(Session session) {
         String contactId = session.getContactId();
-
         // 1. Deliver pending subscription requests
         deliverPendingSubscriptions(session, contactId);
 
@@ -183,7 +183,7 @@ public final class ResourceBindHandler implements StanzaHandler {
 
     /**
      * Delivers pending subscription requests (friend requests received while offline).
-     *
+     * <p>
      * Example: Bob sent Alice a friend request while Alice was offline.
      * When Alice logs in and binds, she receives Bob's subscribe request.
      */
@@ -209,10 +209,10 @@ public final class ResourceBindHandler implements StanzaHandler {
 
     /**
      * Delivers offline messages stored while the user was disconnected.
-     *
+     * <p>
      * Messages are delivered with XEP-0203 Delayed Delivery timestamps
      * so the client knows when they were originally sent.
-     *
+     * <p>
      * Example:
      *   <message from='bob@domain' to='alice@domain'>
      *     <body>Hello!</body>
@@ -222,13 +222,11 @@ public final class ResourceBindHandler implements StanzaHandler {
      *   </message>
      */
     private void deliverOfflineMessages(Session session, String contactId) {
-        List<DatabaseManager.OfflineMessage> messages =
-                db.fetchOfflineMessages(contactId);
+        List<DatabaseManager.OfflineMessage> messages = db.fetchOfflineMessages(contactId);
 
         if (messages.isEmpty()) return;
 
-        logger.info("Delivering " + messages.size()
-                + " offline messages to " + contactId);
+        logger.info("Delivering " + messages.size() + " offline messages to " + contactId);
 
         for (DatabaseManager.OfflineMessage msg : messages) {
             // Format timestamp as XEP-0082 datetime string
@@ -236,17 +234,37 @@ public final class ResourceBindHandler implements StanzaHandler {
 
             String stanza = String.format(
                     "<message id='%s' from='%s' to='%s' type='chat'>" +
-                            "<body>%s</body>" +
+                            "<encrypted xmlns='%s' msg_type='chat' iv='11d3t3g'>%s</encrypted>" +
+                            "<request xmlns='%s'/>" +
                             "<delay xmlns='urn:xmpp:delay' from='%s' stamp='%s'/>" +
                             "</message>",
-                    escapeXml(msg.stanzaId()),
+                    escapeXml(msg.messageId()),
                     escapeXml(msg.fromJid()),
                     escapeXml(contactId),
+                    E2EE_NS,
                     escapeXml(msg.body()),
+                    RECEIPTS_NS,
                     escapeXml(extractDomain(contactId)),
                     timestamp
             );
-            session.writeXML(stanza);
+
+            boolean sent = session.writeXML(stanza);
+            if(!sent){
+
+                db.storeEncryptedMessage(
+                        msg.fromJid(),
+                        contactId,
+                        msg.messageId(),
+                        "text",
+                        msg.body(),
+                        UUID.randomUUID().toString(),
+                        "",
+                        "",
+                        "",
+                        0,
+                        ""
+                );
+            }
         }
     }
 
@@ -256,13 +274,13 @@ public final class ResourceBindHandler implements StanzaHandler {
 
     /**
      * Extracts the resource name from the IQ body:
-     *
+     * <p>
      *   <iq type='set'>
      *     <bind xmlns='...'>
      *       <resource>HERE</resource>
      *     </bind>
      *   </iq>
-     *
+     * <p>
      * Returns null if client didn't specify a resource (server will generate one).
      */
     private String extractRequestedResource(XMLEventReader reader) {
@@ -304,13 +322,13 @@ public final class ResourceBindHandler implements StanzaHandler {
 
     /**
      * Sanitizes a client-provided resource name.
-     *
+     * <p>
      * Rules:
      *  - Max 1023 characters (RFC 7622)
      *  - No control characters
      *  - No XML-unsafe characters (will be escaped anyway but reject upfront)
      *  - No leading/trailing whitespace
-     *
+     * <p>
      * Returns null if the resource is invalid.
      */
     private String sanitizeResource(String resource) {

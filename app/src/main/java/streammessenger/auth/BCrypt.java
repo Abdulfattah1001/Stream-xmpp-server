@@ -4,25 +4,25 @@ import java.security.SecureRandom;
 
 /**
  * Pure Java BCrypt implementation.
- *
+ * <p>
  * BCrypt is a password hashing algorithm designed to be slow.
  * The cost factor (work factor) controls how slow:
  *   cost=10 →  ~100ms per hash
  *   cost=12 →  ~400ms per hash  (the default)
  *   cost=14 → ~1600ms per hash
- *
+ * <p>
  * Why BCrypt for passwords:
  *   - Slow by design: brute force takes years even with stolen DB
  *   - Includes salt: same password hashes differently each time
  *   - Self-contained: the hash includes the salt and cost factor
  *     so you only need to store one string per user
- *
+ * <p>
  * Hash format: $2a$12$<22 char salt><31 char hash>
  *   $2a$ = BCrypt version
  *   12   = cost factor
  *   next 22 chars = salt (Base64 encoded)
  *   next 31 chars = hash (Base64 encoded)
- *
+ * <p>
  * This is a clean-room implementation based on the original
  * Blowfish cipher spec and Niels Provos's BCrypt paper.
  * Safe to use in production - same algorithm as jBCrypt.
@@ -186,9 +186,9 @@ public final class BCrypt {
 
     /**
      * Verifies a plaintext password against a stored BCrypt hash.
-     *
+     * <p>
      * Uses a constant-time comparison to prevent timing attacks.
-     *
+     * <p>
      * @param password   The plaintext password to check
      * @param storedHash The BCrypt hash from the database
      * @return true if the password matches

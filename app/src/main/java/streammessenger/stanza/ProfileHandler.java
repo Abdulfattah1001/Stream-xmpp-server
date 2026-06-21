@@ -1,9 +1,5 @@
 package streammessenger.stanza;
 
-import com.xmpp.db.DatabaseManager;
-import com.xmpp.session.Session;
-import com.xmpp.session.SessionRegistry;
-
 import javax.xml.stream.XMLEventReader;
 import javax.xml.stream.events.StartElement;
 import java.sql.*;
@@ -11,16 +7,21 @@ import java.util.List;
 import java.util.UUID;
 import java.util.logging.Logger;
 
+import streammessenger.db.ConnectionPool;
+import streammessenger.db.DatabaseManager;
+import streammessenger.session.Session;
+import streammessenger.session.SessionRegistry;
+
 /**
  * Handles profile updates (display name, avatar, about).
- *
+ * <p>
  * Namespace: urn:xmpp:profile:0
- *
+ * <p>
  * Operations:
  *   update  → Change own profile fields
  *   get     → Fetch specific user's profile
  *   sync    → Get all profile changes since timestamp
- *
+ * <p>
  * Broadcast on update:
  *   1. Find all users with sender in their roster (sub='from' or 'both')
  *   2. Online users: send <profile-update> stanza immediately

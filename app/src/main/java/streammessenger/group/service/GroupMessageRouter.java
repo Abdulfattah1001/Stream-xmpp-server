@@ -1,10 +1,10 @@
 package streammessenger.group.service;
 
-import com.xmpp.db.DatabaseManager;
-import com.xmpp.group.model.*;
-import com.xmpp.group.repository.GroupRepository;
-import com.xmpp.session.Session;
-import com.xmpp.session.SessionRegistry;
+import streammessenger.db.DatabaseManager;
+import streammessenger.group.model.*;
+import streammessenger.group.repository.GroupRepository;
+import streammessenger.session.Session;
+import streammessenger.session.SessionRegistry;
 
 import java.util.List;
 import java.util.UUID;
@@ -13,7 +13,7 @@ import java.util.logging.Logger;
 
 /**
  * Routes group messages to all members.
- *
+ * <p>
  * KEY DIFFERENCE FROM XEP-0045:
  *   - Members receive messages whether or not they're "in the room"
  *     (because there's no room - there's just membership)
@@ -22,7 +22,6 @@ import java.util.logging.Logger;
  *   - Multi-device: every active session of every member receives the message
  */
 public final class GroupMessageRouter {
-
     private static final Logger logger =
             Logger.getLogger(GroupMessageRouter.class.getName());
 
@@ -46,12 +45,12 @@ public final class GroupMessageRouter {
 
     /**
      * Routes a group message.
-     *
+     * <p>
      * Validation:
      *   1. Sender must be a member
      *   2. Group settings may restrict to admins only
      *   3. Sender must not be muted
-     *
+     * <p>
      * Delivery:
      *   - For each member (except sender):
      *     - If online: deliver to all their sessions
@@ -66,6 +65,7 @@ public final class GroupMessageRouter {
                               long fileSizeBytes) {
 
         Group group = repository.get(groupId);
+
         if (group == null) {
             throw new GroupException(GroupException.Code.NOT_FOUND,
                     "Group not found");
@@ -85,6 +85,7 @@ public final class GroupMessageRouter {
                     "Only admins can send messages in this group");
         }
 
+
         // Check mute
         if (sender.mutedUntil() != null
                 && sender.mutedUntil().isAfter(java.time.Instant.now())) {
@@ -94,6 +95,17 @@ public final class GroupMessageRouter {
 
         if (messageId == null) messageId = UUID.randomUUID().toString();
 
+        // store the message in the  database
+        repository.storeEncryptedMessageEventModel(
+                senderUserId,
+                groupId,
+                messageId,
+                messageType == null ? "text" : messageType,
+                encryptedPayload,
+                null,
+                0,
+                0
+        );
         // Build the stanza
         String stanza = buildMessageStanza(
                 group, sender, messageId, encryptedPayload, iv,

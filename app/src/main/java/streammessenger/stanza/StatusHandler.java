@@ -17,20 +17,20 @@ import streammessenger.session.SessionRegistry;
 
 /**
  * Handles user status (Stories) operations via custom IQ stanzas.
- *
+ * <p>
  * Custom namespace: urn:xmpp:status:0
- *
+ * <p>
  * Operations:
  *   publish  → Post a new status (text/image/video)
  *   fetch    → Get contacts' active statuses
  *   delete   → Delete own status
  *   viewed   → Mark a status as viewed
- *
+ * <p>
  * Status lifetime: exactly 24 hours (enforced by DB expires_at column
  * and background cleanup task)
- *
+ * <p>
  * Example stanzas:
- *
+ * <p>
  * Publish text status:
  *   <iq type='set' id='s1'>
  *     <status xmlns='urn:xmpp:status:0' action='publish'>
@@ -38,7 +38,7 @@ import streammessenger.session.SessionRegistry;
  *       <text background='#FF5733' font='0'>Hello World!</text>
  *     </status>
  *   </iq>
- *
+ * <p>
  * Publish media status:
  *   <iq type='set' id='s2'>
  *     <status xmlns='urn:xmpp:status:0' action='publish'>
@@ -48,12 +48,12 @@ import streammessenger.session.SessionRegistry;
  *       <caption>Look at this!</caption>
  *     </status>
  *   </iq>
- *
+ * <p>
  * Fetch contacts' statuses:
  *   <iq type='get' id='s3'>
  *     <status xmlns='urn:xmpp:status:0' action='fetch'/>
  *   </iq>
- *
+ * <p>
  * Mark as viewed:
  *   <iq type='set' id='s4'>
  *     <status xmlns='urn:xmpp:status:0' action='viewed'>
@@ -105,13 +105,10 @@ public final class StatusHandler implements StanzaHandler {
         }
 
         switch (statusElement.action()) {
-            case "publish" -> handlePublish(
-                    statusElement, iqId, session);
+            case "publish" -> handlePublish(statusElement, iqId, session);
             case "fetch"   -> handleFetch(iqId, session);
-            case "delete"  -> handleDelete(
-                    statusElement, iqId, session);
-            case "viewed"  -> handleViewed(
-                    statusElement, iqId, session);
+            case "delete"  -> handleDelete(statusElement, iqId, session);
+            case "viewed"  -> handleViewed(statusElement, iqId, session);
             default -> sendError(session, iqId, "feature-not-implemented");
         }
     }
@@ -122,11 +119,11 @@ public final class StatusHandler implements StanzaHandler {
 
     /**
      * Publishes a new status for the user.
-     *
+     * <p>
      * Text status:
      *   Creates DB record with text_content, background_color, font_style
      *   Broadcasts to all contacts who are online
-     *
+     * <p>
      * Media status:
      *   Creates DB record with media_storage_key
      *   Media file must already be uploaded via HTTP API
@@ -209,10 +206,10 @@ public final class StatusHandler implements StanzaHandler {
     /**
      * Returns all active (non-expired, non-deleted) statuses
      * from the requesting user's contacts.
-     *
+     * <p>
      * Only returns statuses from users who have this user in their
      * contacts (respects visibility settings).
-     *
+     * <p>
      * Also returns an indicator of which statuses this user has viewed.
      */
     private void handleFetch(String iqId, Session session) {

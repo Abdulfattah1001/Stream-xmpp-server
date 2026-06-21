@@ -4,7 +4,7 @@ import java.time.Instant;
 
 /**
  * Immutable snapshot of a group.
- *
+ * <p>
  * Returned by repository methods.
  * For mutations: call repository methods directly.
  */

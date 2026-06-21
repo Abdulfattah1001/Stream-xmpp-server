@@ -1,14 +1,15 @@
 package streammessenger.session;
 
-import org.slf4j.LoggerFactory;
-
 import javax.net.ssl.SSLSocket;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
-import java.security.SecureRandom;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
@@ -18,9 +19,44 @@ import streammessenger.exception.StreamException;
 import streammessenger.xep.sm.StreamManagementState;
 
 
-/**
- * Represents a single client connection and ALL its associated state.
+/*
+  @author abdulfattah
+ * For the context such as not to forget, @abdulfattah too dey forget,
+ * the uid -> session_id and not user_id
+ * contactId is unique among users but can be change so, it
+ * is not used for a mode of permanent identifier, instead
+ * a server generated is used for that job
  *
+ * Fields and what they mean:
+ * ┌──────────────────────────────────────────────────────--┐
+ * │ uid         │ "a3f2b1c4..." - random, from connection  │
+ * │             │  time. Never changes. Used as map key.   │
+ * ├──────────────────────────────────────────────────────--┤
+ * │ contactId   │ "alice@domain.com" - set AFTER auth  │
+ * │             │  This is the user's identity             │
+ * ├──────────────────────────────────────────────────────--┤
+ * │ resource    │ "mobile" or "desktop" - set after bind   │
+ * │             │  One user can have multiple resources    │
+ * ├──────────────────────────────────────────────────────--┤
+ * │ jid         │ "alice@domain.com/mobile"            │
+ * │             │  Full JID = contactId + "/" + resource   │
+ * ├──────────────────────────────────────────────────────--┤
+ * │ state       │ INITIAL → STREAM_OPENED →                │
+ * │             │ STARTTLS_NEGOTIATED → AUTHENTICATING →   │
+ * │             │ AUTHENTICATED → CLOSED                   │
+ * ├──────────────────────────────────────────────────────--┤
+ * │ lastActivity│ System.currentTimeMillis() - updated     │
+ * │             │  every time client sends anything        │
+ * │             │  Reaper uses this to detect idle         │
+ * └──────────────────────────────────────────────────────--┘
+ */
+
+/**
+ * @author abdulfattah
+ * <p>
+ * <p>
+ * Represents a single client connection and ALL its associated state.
+ * <p>
  * Thread safety model:
  *  - AtomicReference for session state (frequent reads, rare writes)
  *  - AtomicLong for lastActivity (written on every stanza, read by reaper)
@@ -31,13 +67,11 @@ import streammessenger.xep.sm.StreamManagementState;
 public class Session {
 
     private static final Logger logger = Logger.getLogger(Session.class.getName());
-    private static final SecureRandom secureRandom = new SecureRandom();
-    private static final org.slf4j.Logger log = LoggerFactory.getLogger(Session.class);
 
     // -------------------------------------------------------------------------
     // Immutable identity - set at construction, never change
     // -------------------------------------------------------------------------
-    private final String uid;
+    private final String sessionId;
     private final Socket socket;
 
     // -------------------------------------------------------------------------
@@ -53,14 +87,15 @@ public class Session {
     private volatile SSLSocket sslSocket;
 
     // Written once during authentication, read many times after
-    private volatile String contactId;
+    private volatile String contactId; // user@domain
     private volatile String resource;
     private volatile String jid; // full JID: user@domain/resource
 
-    // Add to Session.java
 
     // Device ID (from device registry) - set after resource binding
     private volatile String deviceId;
+    private final ScheduledExecutorService scheduler;
+    private ScheduledFuture<?> ackTaskHandle;
 
 
     // -------------------------------------------------------------------------
@@ -78,15 +113,24 @@ public class Session {
     // Constructor
     // -------------------------------------------------------------------------
 
-    public Session(Socket socket, String uid) {
+    public Session(Socket socket, String sessionId, ScheduledExecutorService scheduledExecutorService) {
         if (socket == null) throw new IllegalArgumentException("Socket cannot be null");
-        if (uid == null || uid.isBlank()) throw new IllegalArgumentException("UID cannot be null/empty");
+        if (sessionId == null || sessionId.isBlank()) throw new IllegalArgumentException("sessionId cannot be null/empty");
         this.socket = socket;
-        this.uid = uid;
+        this.sessionId = sessionId;
+        this.scheduler = scheduledExecutorService;
     }
 
 
     public String getDeviceId() { return deviceId; }
+
+    /**
+     * Gets the user uid in the format [u_61bid] from the jid
+     * @return the uid of the user
+     */
+    public String getUid() {
+        return this.getJid().split("@")[0];
+    }
 
     public void setDeviceId(String deviceId) {
         this.deviceId = deviceId;
@@ -99,10 +143,10 @@ public class Session {
 
     /**
      * Writes raw XML to the client.
-     *
+     * <p>
      * Chooses SSL socket if TLS has been negotiated, plain socket otherwise.
      * Acquires the write lock to prevent concurrent writes from interleaving XML.
-     *
+     * <p>
      * If Stream Management is enabled, the stanza is added to the unacked queue
      * before being sent so it can be retransmitted on session resumption.
      *
@@ -128,7 +172,7 @@ public class Session {
             return true;
 
         } catch (IOException e) {
-            logger.warning("Write failed uid=" + uid + ": " + e.getMessage());
+            logger.warning("Write failed sessionId=" + sessionId + ": " + e.getMessage());
             return false;
         } finally {
             writeLock.unlock();
@@ -166,6 +210,9 @@ public class Session {
      * Used in error paths and as the final step of closeGracefully().
      */
     public void closeQuietly() {
+        if (ackTaskHandle != null) {
+            ackTaskHandle.cancel(false);
+        }
         state.set(SessionState.CLOSED);
         closeSilently(sslSocket);
         closeSilently(socket);
@@ -177,7 +224,7 @@ public class Session {
 
     /**
      * Enables Stream Management for this session.
-     *
+     * <p>
      * Called by StreamManagementHandler after the client sends <enable/>.
      * Creates a new StreamManagementState and attaches it to this session.
      *
@@ -186,8 +233,9 @@ public class Session {
      */
     public void enableStreamManagement(String smId, boolean resumable) {
         this.smState = new StreamManagementState(smId, resumable);
-        logger.info("Stream management enabled uid=" + uid
+        logger.info("Stream management enabled sessionId=" + sessionId
                 + " smId=" + smId + " resumable=" + resumable);
+        startStreamManagement();
     }
 
     /**
@@ -226,6 +274,23 @@ public class Session {
         }
     }
 
+    private void startStreamManagement() {
+        this.ackTaskHandle = scheduler.scheduleAtFixedRate(
+                this::checkAckRequirement,
+                30, 30, TimeUnit.SECONDS
+        );
+    }
+
+    private void checkAckRequirement() {
+        long current = System.currentTimeMillis();
+        // Only send <r/> if they've been idle AND we actually have stanzas to ack
+        /*if ((current - lastActivity.get() >= 15000) && smState.getUnackedCount() > 0) {
+            writeXML("<r xmlns='urn:xmpp:sm:3'/>");
+            logger.info("Sent <r/>");
+        }*/
+
+        writeXML("<r xmlns='urn:xmpp:sm:3'/>");
+    }
     /**
      * Returns the number of stanzas received from the client since SM was enabled.
      * Sent back to client in <a h='N'/> responses.
@@ -244,7 +309,7 @@ public class Session {
 
     public void setSessionState(SessionState newState) {
         SessionState old = state.getAndSet(newState);
-        logger.fine("Session uid=" + uid + " state: " + old + " → " + newState);
+        logger.fine("Session uid=" + sessionId + " state: " + old + " → " + newState);
     }
 
     /**
@@ -285,7 +350,7 @@ public class Session {
     // Getters and setters
     // =========================================================================
 
-    public String getUid() { return uid; }
+    public String getSessionId() { return sessionId; }
 
     public Socket getSocket() { return socket; }
 
@@ -295,6 +360,10 @@ public class Session {
         this.sslSocket = sslSocket;
     }
 
+    /**
+     * Gets the user contactId
+     * @return The user contactId in the format uid@domain
+     */
     public String getContactId() { return contactId; }
 
     public void setContactId(String contactId) {
@@ -336,7 +405,7 @@ public class Session {
                 return socket.getOutputStream();
             }
         } catch (IOException e) {
-            logger.warning("Cannot resolve OutputStream uid=" + uid + ": " + e.getMessage());
+            logger.warning("Cannot resolve OutputStream sessionId=" + sessionId + ": " + e.getMessage());
         }
         return null;
     }
@@ -384,22 +453,22 @@ public class Session {
 
     @Override
     public String toString() {
-        return String.format("Session{uid=%s, jid=%s, state=%s, sm=%s}",
-                uid, jid, state.get(), smState != null ? "enabled" : "disabled");
+        return String.format("Session{sessionId=%s, jid=%s, state=%s, sm=%s}",
+                sessionId, jid, state.get(), smState != null ? "enabled" : "disabled");
     }
 
 
     /**
      * Restores a previously saved SM state during session resumption.
-     *
+     * <p>
      * Unlike enableStreamManagement() which creates a NEW state,
      * this method CONTINUES an existing state - preserving the
      * sequence numbers, unacked queue, and inbound count.
-     *
+     * <p>
      * The critical difference:
      *   enableStreamManagement()           → new state, seq starts at 0
      *   enableStreamManagementWithState()  → existing state, seq continues
-     *
+     *<p>
      * This is what makes resumption work:
      *   Old session: outboundSeq=10, inboundCount=7, unacked=[8,9,10]
      *   Client disconnects having received up to seq=7
@@ -415,9 +484,9 @@ public class Session {
             StreamManagementState existingState) {
         this.smState = existingState;
         logger.info(String.format(
-                "SM state restored: uid=%s smId=%s " +
+                "SM state restored: sessionId=%s smId=%s " +
                         "outSeq=%d inCount=%d unacked=%d",
-                uid,
+                sessionId,
                 existingState.getSmId(),
                 existingState.getOutboundSeq(),
                 existingState.getInboundCount(),

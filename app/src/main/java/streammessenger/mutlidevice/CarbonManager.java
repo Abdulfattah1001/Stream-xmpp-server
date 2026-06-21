@@ -116,7 +116,7 @@ public final class CarbonManager {
      */
     public void enableCarbons(Session session) {
         String contactId = session.getContactId();
-        String uid       = session.getUid();
+        String uid       = session.getSessionId();
 
         // Update in-memory cache
         carbonEnabled
@@ -137,7 +137,7 @@ public final class CarbonManager {
      */
     public void disableCarbons(Session session) {
         String contactId = session.getContactId();
-        String uid       = session.getUid();
+        String uid       = session.getSessionId();
 
         ConcurrentHashMap<String, Boolean> userCarbons =
                 carbonEnabled.get(contactId);
@@ -161,7 +161,7 @@ public final class CarbonManager {
         ConcurrentHashMap<String, Boolean> userCarbons =
                 carbonEnabled.get(contactId);
         if (userCarbons != null) {
-            userCarbons.remove(session.getUid());
+            userCarbons.remove(session.getSessionId());
             if (userCarbons.isEmpty()) {
                 carbonEnabled.remove(contactId);
             }
@@ -175,7 +175,7 @@ public final class CarbonManager {
         ConcurrentHashMap<String, Boolean> userCarbons =
                 carbonEnabled.get(session.getContactId());
         return userCarbons != null
-                && Boolean.TRUE.equals(userCarbons.get(session.getUid()));
+                && Boolean.TRUE.equals(userCarbons.get(session.getSessionId()));
     }
 
     // =========================================================================
@@ -215,7 +215,7 @@ public final class CarbonManager {
         for (Session session : otherSessions) {
             if (deliverCarbon(session, carbonStanza, messageId)) {
                 logger.fine("Received carbon delivered to uid="
-                        + session.getUid()
+                        + session.getSessionId()
                         + " for messageId=" + messageId);
             }
         }
@@ -258,7 +258,7 @@ public final class CarbonManager {
         for (Session session : otherSessions) {
             if (deliverCarbon(session, carbonStanza, messageId)) {
                 logger.fine("Sent carbon delivered to uid="
-                        + session.getUid()
+                        + session.getSessionId()
                         + " for messageId=" + messageId);
             }
         }
@@ -371,7 +371,7 @@ public final class CarbonManager {
                                    String carbonStanza,
                                    String messageId) {
         // Record delivery (unique constraint prevents duplicates)
-        if (!recordCarbonDelivery(messageId, session.getUid())) {
+        if (!recordCarbonDelivery(messageId, session.getSessionId())) {
             return false; // Already delivered to this resource
         }
 

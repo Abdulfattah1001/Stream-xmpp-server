@@ -1,4 +1,4 @@
-package streammessenger.muc;
+package streammessenger.muc1;
 
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;

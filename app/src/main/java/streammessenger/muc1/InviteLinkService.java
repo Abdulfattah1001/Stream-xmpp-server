@@ -1,4 +1,4 @@
-package streammessenger.muc;
+package streammessenger.muc1;
 
 import java.time.Duration;
 import java.time.Instant;

@@ -8,6 +8,8 @@ import javax.xml.stream.events.Attribute;
 import javax.xml.stream.events.StartElement;
 import javax.xml.stream.events.XMLEvent;
 import java.sql.*;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
 
@@ -18,7 +20,7 @@ import streammessenger.session.SessionRegistry;
 import streammessenger.stanza.StanzaHandler;
 
 /**
- * Voice and Video Call Signaling via WebRTC.
+ * Voice and Video Call Signaling via WebRTC Or Twilio.
  * <p>
  * Custom namespace: urn:xmpp:call:0
  * <p>
@@ -31,15 +33,15 @@ import streammessenger.stanza.StanzaHandler;
  * <p>
  *   Alice                  Server                  Bob
  *     │                       │                      │
- *     │── initiate call ──────▶│                      │
- *     │   (SDP offer)         │── push notification ─▶│
+ *     │── initiate call ─────▶│                      │
+ *     │   (SDP offer)         │─ push notification ─▶│
  *     │                       │   + XMPP invite      │
  *     │                       │                      │
  *     │                       │◀── answer (accept) ──│
  *     │◀── answer relayed ────│                      │
  *     │                       │                      │
  *     │◀══════════════════════ ICE candidates ═══════│
- *     │═══════════════════════ exchanged via server ═▶│
+ *     │══════════════════════ exchanged via server ═▶│
  *     │                       │                      │
  *     │◀══════════════════════ P2P audio/video ══════│
  *     │   (direct after ICE)  │   (no server relay)  │
@@ -126,13 +128,14 @@ public final class CallSignalingHandler implements StanzaHandler {
     public void handle(StartElement element,
                         XMLEventReader reader,
                         Session session) {
-
         if (!session.isAuthenticated()) {
             consumeElement(reader);
             return;
         }
 
+
         String iqId = getAttr(element, "id");
+
         CallRequest req = parseRequest(reader);
 
         if (req == null) {
@@ -157,7 +160,7 @@ public final class CallSignalingHandler implements StanzaHandler {
 
     /**
      * Caller sends SDP offer to initiate a call.
-     *
+     * <p>
      * Actions:
      *  1. Validate neither party is in another call
      *  2. Store call record in DB
@@ -178,6 +181,9 @@ public final class CallSignalingHandler implements StanzaHandler {
         String callerId = extractUserId(callerSession.getContactId());
         String calleeJid = toBareJid(req.to());
         String calleeId  = extractUserId(calleeJid);
+        String callId = UUID.randomUUID().toString();
+        // Twilio room name = call_id (same UUID)
+        String roomName = "call-"+callId;
 
         // Check caller not already in a call
         if (isInActiveCall(callerId)) {
@@ -196,20 +202,23 @@ public final class CallSignalingHandler implements StanzaHandler {
                 req.callId(), callerId,
                 callerSession.getContactId(),
                 calleeId, calleeJid,
-                callType, System.currentTimeMillis()
-        );
+                callType, System.currentTimeMillis());
+
         activeCalls.put(req.callId(), state);
 
         // Create DB record
         createCallRecord(req.callId(), callerId, calleeId, callType);
 
         // Acknowledge to caller
+        // The callee device is ringing
         callerSession.writeXML(String.format(
             "<iq type='result' id='%s'>" +
             "<call xmlns='%s' action='ringing'>" +
             "<call_id>%s</call_id>" +
+             "<twilio_room>%s</twilio_room>" +
             "</call></iq>",
-            escapeXml(iqId), CALL_NS, req.callId()
+            escapeXml(iqId), CALL_NS,
+            req.callId(), roomName
         ));
 
         // Route SDP offer to callee
@@ -233,14 +242,13 @@ public final class CallSignalingHandler implements StanzaHandler {
                 .map(s -> s.writeXML(offerStanza))
                 .orElse(false);
 
-        // Always send push notification for calls (wakes up the app)
+        // Always send push notification for calls (wakes up the app if the app is in the background state)
         String callerName = getDisplayName(callerId);
-        pushService.sendCallNotification(
-                calleeId, callerName, callType, req.callId());
+
+        pushService.sendPushCallNotification(calleeId, callerName, callType, req.callId());
 
         if (!calleeOnline) {
-            logger.info("Callee offline for call " + req.callId()
-                    + " - push notification sent");
+            logger.info("Callee offline for call " + req.callId() + " - push notification sent");
         }
 
         // Schedule ring timeout - auto-decline after 60 seconds
@@ -262,6 +270,28 @@ public final class CallSignalingHandler implements StanzaHandler {
                 // Update DB to missed
                 updateCallState(req.callId(), "missed", null);
                 logger.info("Call missed (timeout): " + req.callId());
+
+                //TODO: Also notify the callee of missed call if they are online else cache it as a message stanza
+                Optional<Session> recipientSession = registry.getByContactId(calleeId);
+
+                boolean delivered = false;
+                if(recipientSession.isPresent() && recipientSession.get().isAuthenticated()){
+                    delivered = recipientSession.get().writeXML(String.format(
+                            "<message from='%s'>" +
+                                    "<call xmlns='%s' action='missed'>" +
+                                    "<call_id>%s</call_id>" +
+                                    "</call></message>",
+                            escapeXml(calleeId),
+                            CALL_NS, req.callId()
+                    ));
+
+                    if(delivered){
+                        //TODO: Updates metrics here
+                    }else{
+                        //TODO: Persist the message till the callee comes online
+                        logger.info("Persisting the call for when the user logs-in");
+                    }
+                }
             }
         }, RING_TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
@@ -279,7 +309,7 @@ public final class CallSignalingHandler implements StanzaHandler {
 
     /**
      * Callee accepts the call and sends their SDP answer.
-     *
+     * <p>
      * Actions:
      *  1. Cancel ring timeout
      *  2. Update call state to answered
@@ -393,10 +423,10 @@ public final class CallSignalingHandler implements StanzaHandler {
 
     /**
      * Relays ICE candidates between caller and callee.
-     *
+     * <p>
      * ICE candidates are network path options WebRTC uses to establish
      * the best P2P connection (local network, STUN, or TURN fallback).
-     *
+     * <p>
      * Both sides send candidates simultaneously as they're discovered.
      * Once both sides have matching candidates, the P2P connection forms.
      */
@@ -562,16 +592,17 @@ public final class CallSignalingHandler implements StanzaHandler {
     // Database
     // =========================================================================
 
+    //TODO: Updates
     private void createCallRecord(String callId,
                                    String callerUserId,
                                    String calleeUserId,
                                    String callType) {
         String sql = """
-            INSERT INTO calls (
-                call_id, caller_user_id, callee_user_id,
-                call_type, state, started_at
-            ) VALUES (?::uuid, ?, ?, ?, 'ringing', NOW())
-            """;
+    INSERT INTO call_records (
+        call_id, caller_user_id, callee_user_id,
+        call_type, state, started_at
+    ) VALUES (?, ?, ?, ?, 'ringing', NOW())
+    """;
 
         try (Connection conn = pool.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
@@ -592,13 +623,13 @@ public final class CallSignalingHandler implements StanzaHandler {
                                   String state,
                                   Long answeredAtMs) {
         String sql = """
-            UPDATE calls
+            UPDATE call_records
             SET state       = ?,
                 answered_at = CASE WHEN ? IS NOT NULL
                                    THEN to_timestamp(? / 1000.0)
                                    ELSE answered_at
                               END
-            WHERE call_id::text = ?
+            WHERE call_id = ?
             """;
 
         try (Connection conn = pool.getConnection();
@@ -627,7 +658,7 @@ public final class CallSignalingHandler implements StanzaHandler {
             SET state            = 'ended',
                 ended_at         = NOW(),
                 duration_seconds = ?
-            WHERE call_id::text = ?
+            WHERE call_id = ?
             """;
 
         try (Connection conn = pool.getConnection();
@@ -680,6 +711,7 @@ public final class CallSignalingHandler implements StanzaHandler {
         try {
             int depth = 1;
             while (reader.hasNext() && depth > 0) {
+
                 XMLEvent event = reader.nextEvent();
 
                 if (event.isStartElement()) {
@@ -692,6 +724,7 @@ public final class CallSignalingHandler implements StanzaHandler {
                         action   = getAttr(se, "action");
                         callType = getAttr(se, "type") != null
                                 ? getAttr(se, "type") : "voice";
+
                     }
 
                     switch (name) {
@@ -702,13 +735,15 @@ public final class CallSignalingHandler implements StanzaHandler {
                     }
                 }
 
-                if (event.isEndElement()) depth--;
+                if (event.isEndElement()){
+                    depth--;
+                    if(event.asEndElement().getName().getLocalPart().equals("iq")) break;
+                }
             }
         } catch (XMLStreamException e) {
             logger.warning("parseRequest error: " + e.getMessage());
             return null;
         }
-
         return new CallRequest(action, callId, to, callType, sdp, iceCandidate);
     }
 

@@ -2,14 +2,15 @@
 
 package streammessenger.features;
 
-import com.xmpp.db.ConnectionPool;
-import com.xmpp.session.Session;
-import com.xmpp.session.SessionRegistry;
 
 import java.sql.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
+
+import streammessenger.db.ConnectionPool;
+import streammessenger.session.Session;
+import streammessenger.session.SessionRegistry;
 
 /**
  * Broadcasts profile updates to all "interested parties":

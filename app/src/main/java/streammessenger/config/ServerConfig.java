@@ -24,6 +24,7 @@ public final class ServerConfig {
 
     private final int port;
     private final String address;
+    private final String domainName;
     private final String environment;
     private final String fcmProjectId;
     private final String fcmServiceAccountJson;
@@ -45,6 +46,7 @@ public final class ServerConfig {
     private ServerConfig(Builder b) {
         this.port = b.port;
         this.address = b.address;
+        this.domainName = b.domainName;
         this.environment = b.environment;
         this.sslContext = b.sslContext;
         this.corePoolSize = b.corePoolSize;
@@ -101,10 +103,11 @@ public final class ServerConfig {
         return new Builder()
                 .port(intProp(props, "port", 5222))
                 .botApiPort(intProp(props, "botApiPort", 5223))
-                .fcmProjectId(props.getProperty("fcmProjectId", ""))
+                .fcmProjectId(props.getProperty("fcmProjectId", "stream-6fa32"))
                 .fcmServiceAccountJson(props.getProperty("fcmServiceAccountJson", ""))
                 .apnsBundleId(props.getProperty("apnsBundleId", ""))
                 .address(props.getProperty("address", "0.0.0.0"))
+                .domainName("omnyrex.com")
                 .environment(env)
                 .sslContext(sslContext)
                 .corePoolSize(intProp(props, "corePoolSize", 10))
@@ -184,6 +187,9 @@ public final class ServerConfig {
     public int getBotApiPort() {return botApiPort;}
 
     public String getAddress() { return address; }
+
+    public String getDomainName() { return domainName; }
+
     public String getEnvironment() { return environment; }
 
     public String getFcmProjectId() { return fcmProjectId; }
@@ -214,6 +220,7 @@ public final class ServerConfig {
         private int port = 5222;
         private int botApiPort = 5223;
         private String address = "0.0.0.0";
+        private String domainName;
         private String environment = "DEV";
         private String fcmProjectId;
         private String fcmServiceAccountJson;
@@ -234,6 +241,8 @@ public final class ServerConfig {
         public Builder port(int v) { this.port = v; return this; }
         public Builder botApiPort(int v) { this.botApiPort = v; return this; }
         public Builder address(String v) { this.address = v; return this; }
+
+        public Builder domainName(String v) { this.domainName = v; return this; }
 
         public Builder fcmProjectId(String v) { this.fcmProjectId = v; return this; }
         public Builder fcmServiceAccountJson(String v) { this.fcmServiceAccountJson = v; return  this; }

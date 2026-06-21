@@ -1,6 +1,7 @@
 package streammessenger.stream;
 
 
+import javax.xml.namespace.QName;
 import javax.xml.stream.XMLEventReader;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.events.Attribute;
@@ -11,6 +12,10 @@ import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 
 import streammessenger.auth.AuthManager;
@@ -21,6 +26,7 @@ import streammessenger.db.DatabaseManager;
 import streammessenger.exception.StartTLSException;
 import streammessenger.exception.StreamException;
 import streammessenger.features.CollaborativeNoteHandler;
+import streammessenger.group.handler.GroupStanzaHandler;
 import streammessenger.metrics.ServerMetrics;
 import streammessenger.mutlidevice.MultiDeviceMessageHandler;
 import streammessenger.push.PushNotificationService;
@@ -31,10 +37,9 @@ import streammessenger.session.SessionState;
 import streammessenger.stanza.AuthHandler;
 import streammessenger.stanza.BlogHandler;
 import streammessenger.stanza.CarbonHandler;
+import streammessenger.stanza.EncryptedMessageHandler;
 import streammessenger.stanza.IQHandler;
-import streammessenger.stanza.MessageHandler;
 import streammessenger.stanza.PresenceHandler;
-import streammessenger.stanza.ScheduledMessageHandler;
 import streammessenger.stanza.StanzaHandler;
 import streammessenger.stanza.StatusHandler;
 import streammessenger.stanza.VerifiedAccountHandler;
@@ -43,10 +48,10 @@ import streammessenger.xep.sm.StreamManagementHandler;
 
 /**
  * Core XMPP stream processor.
- *
+ * <p>
  * Owns the stanza handler registry. All handlers are stateless singletons
  * created once and reused across all connections.
- *
+ * <p>
  * Dispatches inbound XML elements to the correct handler.
  * Manages stream-level elements directly (stream open, STARTTLS, SM acks).
  */
@@ -59,8 +64,11 @@ public final class XMPPStreamProcessor {
     private static final String SASL_NS = "urn:ietf:params:xml:ns:xmpp-sasl";
     private static final String SM_NS   = "urn:xmpp:sm:3";
     private static final String BIND_NS = "urn:ietf:params:xml:ns:xmpp-bind";
-    private static final Logger log = Logger.getLogger(XMPPStreamProcessor.class.getName());
+    private static final String GROUP_NS = "urn:xmpp:group:0";
 
+    // MUC routing
+    private final String mucDomain;          // "conference.yourdomain.com"
+    private volatile GroupStanzaHandler groupHandler;
     // Stanza handlers - stateless singletons, keyed by element local name
     private final Map<String, StanzaHandler> handlers;
 
@@ -71,6 +79,7 @@ public final class XMPPStreamProcessor {
 
     private final ServerMetrics metrics;
     private final DatabaseManager db;
+    private final ScheduledExecutorService scheduledExecutorService = Executors.newScheduledThreadPool(10);
 
     public XMPPStreamProcessor(DatabaseManager db,
                                SessionRegistry registry,
@@ -78,7 +87,8 @@ public final class XMPPStreamProcessor {
                                RosterManager rosterManager,
                                ServerMetrics metrics, ConnectionPool pool,
                                CarbonHandler carbonHandler,
-                               MultiDeviceMessageHandler multiDeviceMessageHandler) {
+                               MultiDeviceMessageHandler multiDeviceMessageHandler,
+                               CallSignalingHandler callHandler) {
         this.db     = db;
         this.metrics = metrics;
         this.smHandler = new StreamManagementHandler(registry);
@@ -86,24 +96,26 @@ public final class XMPPStreamProcessor {
         this.carbonHandler = carbonHandler;
         this.multiDeviceHandler = multiDeviceMessageHandler;
 
+        this.mucDomain = "conference"+"@omnyrex.com";
+
         // Build handler registry - one instance per handler, shared across all connections
         this.handlers = new HashMap<>();
         this.handlers.put("auth",     new AuthHandler(authManager));
-        this.handlers.put("message",  new MessageHandler(registry, db, metrics));
-        this.handlers.put("presence", new PresenceHandler(registry));
-        this.handlers.put("iq",       new IQHandler(db, registry, rosterManager));
+        //TODO: Not encrypted message:this.handlers.put("message",  new MessageHandler(registry, db, metrics));
+        this.handlers.put("message", new EncryptedMessageHandler(registry, db, metrics));
+        this.handlers.put("presence", new PresenceHandler(registry, db));
+        this.handlers.put("iq",       new IQHandler(db, registry, rosterManager, callHandler));
         this.handlers.put("status-iq",new StatusHandler(db, registry));
-        this.handlers.put("call",     new CallSignalingHandler(pool, registry, PushNotificationService.getInstance()));
+        this.handlers.put("call",     callHandler);
         this.handlers.put("note",     new CollaborativeNoteHandler(pool, registry));
-        this.handlers.put("schedule", new ScheduledMessageHandler(pool, db, registry, (MessageHandler) this.handlers.get("message")));
+        //this.handlers.put("schedule", new ScheduledMessageHandler(pool, db, registry, (MessageHandler) this.handlers.get("message")));
         this.handlers.put("verified", new VerifiedAccountHandler(pool, registry));
-        this.handlers.put("blog",
-                new BlogHandler(db, registry, new BlogDatabaseManager(pool)));
+        this.handlers.put("blog", new BlogHandler(db, registry, new BlogDatabaseManager(pool)));
     }
 
     /**
      * Runs the XML stream processing loop.
-     *
+     * <p>
      * Blocks until:
      *  - Client closes the stream cleanly (</stream:stream>)
      *  - Client disconnects (IOException)
@@ -127,7 +139,7 @@ public final class XMPPStreamProcessor {
             if (event.isEndElement()) {
                 String localName = event.asEndElement().getName().getLocalPart();
                 if ("stream".equals(localName)) {
-                    logger.info("Stream closed by client uid=" + session.getUid());
+                    logger.info("Stream closed by client uid=" + session.getSessionId());
                     session.writeXML("</stream:stream>");
                     return;
                 }
@@ -140,7 +152,13 @@ public final class XMPPStreamProcessor {
      * Saves SM state if the session had SM enabled.
      */
     public void onSessionDisconnect(Session session) {
+        db.updateUserLastSeen(session.getJid());
         smHandler.onSessionDisconnect(session);
+    }
+
+    public void registerGroupHandler(GroupStanzaHandler handler) {
+        this.groupHandler = handler;
+        logger.info("Group stanza handler registered for domain: " + mucDomain);
     }
 
     public void shutdown() {
@@ -150,110 +168,6 @@ public final class XMPPStreamProcessor {
     // =========================================================================
     // Private dispatch
     // =========================================================================
-
-    private void handleStartElementOld(StartElement element,
-                                    XMLEventReader reader,
-                                    Session session)
-            throws StartTLSException, XMLStreamException, IOException {
-
-        String localName = element.getName().getLocalPart();
-        String ns = element.getName().getNamespaceURI();
-        if (ns == null) ns = "";
-
-        switch (localName) {
-            // -----------------------------------------------------------------
-            // Stream-level elements
-            // -----------------------------------------------------------------
-            case "stream" -> {
-                handleStreamOpen(element, session);
-            }
-
-            case "starttls" -> {
-                handleStartTLS(session);
-            }
-
-            // -----------------------------------------------------------------
-            // Stream Management control frames (not stanzas)
-            // -----------------------------------------------------------------
-            case "enable" -> {
-                if (SM_NS.equals(ns)) {
-                    smHandler.handleEnable(element, session);
-                } else {
-                    consumeElement(reader);
-                }
-            }
-
-            case "r" -> {
-                if (SM_NS.equals(ns)) {
-                    smHandler.handleRequestAck(session);
-                    // Count as inbound activity
-                    session.touchActivity();
-                } else {
-                    consumeElement(reader);
-                }
-            }
-
-            case "a" -> {
-                if (SM_NS.equals(ns)) {
-                    smHandler.handleAck(element, session);
-                } else {
-                    consumeElement(reader);
-                }
-            }
-
-            case "resume" -> {
-                if (SM_NS.equals(ns)) {
-                    smHandler.handleResume(element, reader, session);
-                } else {
-                    consumeElement(reader);
-                }
-            }
-
-            // -----------------------------------------------------------------
-            // Authentication (pre-auth only)
-            // -----------------------------------------------------------------
-            case "auth" -> {
-                StanzaHandler handler = handlers.get("auth");
-                if (handler != null) {
-                    handler.handle(element, reader, session);
-                    metrics.stanzaProcessed();
-                }
-            }
-
-            // -----------------------------------------------------------------
-            // Stanzas - require authentication
-            // -----------------------------------------------------------------
-            case "message", "presence", "iq" -> {
-                if (!session.isAuthenticated()) {
-                    logger.warning("Unauthenticated stanza <" + localName
-                            + "> uid=" + session.getUid());
-                    session.writeStreamError(
-                            StreamException.Condition.NOT_AUTHORIZED,
-                            "You must authenticate first"
-                    );
-                    consumeElement(reader);
-                    return;
-                }
-
-                session.touchActivity();
-                session.incrementInboundCount();
-
-                StanzaHandler handler = handlers.get(localName);
-                if (handler != null) {
-                    handler.handle(element, reader, session);
-                    metrics.stanzaProcessed();
-                } else {
-                    logger.warning("No handler for stanza: " + localName);
-                    consumeElement(reader);
-                }
-            }
-
-            default -> {
-                logger.fine("Unhandled element: " + localName + " ns=" + ns);
-                consumeElement(reader);
-            }
-        }
-    }
 
 
     // The resume element must be handled in the STARTTLS_NEGOTIATED state
@@ -304,7 +218,7 @@ public final class XMPPStreamProcessor {
                 if (resumed) {
                     metrics.sessionAuthenticated();
                     logger.info("Session resumed via SM uid="
-                            + session.getUid()
+                            + session.getSessionId()
                             + " contactId=" + session.getContactId());
 
                     // Deliver any offline messages that arrived
@@ -359,7 +273,7 @@ public final class XMPPStreamProcessor {
             case "messageold", "presence", "iqold" -> {
                 if (!session.isAuthenticated()) {
                     logger.warning("Unauthenticated stanza <"
-                            + localName + "> uid=" + session.getUid());
+                            + localName + "> uid=" + session.getSessionId());
                     session.writeStreamError(
                             StreamException.Condition.NOT_AUTHORIZED,
                             "Authentication required"
@@ -376,12 +290,24 @@ public final class XMPPStreamProcessor {
                     session.getSmState().incrementInbound();
                 }
 
-                StanzaHandler handler = handlers.get(localName);
-                if (handler != null) {
-                    handler.handle(element, reader, session);
-                    metrics.stanzaProcessed();
-                } else {
-                    consumeElement(reader);
+                // Peek at the child to route to specific handlers
+                String iqNs = peekChildNamespace(reader, element);
+                if (iqNs != null && iqNs.equals("http://jabber.org/protocol/muc")) {
+                    if (groupHandler != null) {
+                        groupHandler.handle(element, reader, session);
+                        metrics.stanzaProcessed();
+                    } else {
+                        consumeElement(reader);
+                    }
+                }
+                else {
+                    StanzaHandler handler = handlers.get(localName);
+                    if (handler != null) {
+                        handler.handle(element, reader, session);
+                        metrics.stanzaProcessed();
+                    } else {
+                        consumeElement(reader);
+                    }
                 }
             }
 
@@ -389,16 +315,31 @@ public final class XMPPStreamProcessor {
                 session.touchActivity();
                 session.incrementInboundCount();
 
+                if (session.hasStreamManagement()) {
+                    session.getSmState().incrementInbound();
+                }
+
                 // Peek at the child to route to specific handlers
                 String iqNs = peekChildNamespace(reader, element);
-
-                if ("urn:xmpp:carbons:2".equals(iqNs)
+                if (iqNs.equals(GROUP_NS)) {
+                    if (groupHandler != null) {
+                        groupHandler.handle(element, reader, session);
+                        metrics.stanzaProcessed();
+                    } else {
+                        logger.warning("Group handler not registered");
+                        consumeElement(reader);
+                    }
+                }
+                else if ("urn:xmpp:carbons:2".equals(iqNs)
                         || "urn:xmpp:device:0".equals(iqNs)) {
                     carbonHandler.handle(element, reader, session);
                 } else {
                     StanzaHandler handler = handlers.get(localName);
                     if (handler != null) {
                         handler.handle(element, reader, session);
+                        metrics.stanzaProcessed();
+                    } else {
+                        consumeElement(reader);
                     }
                 }
 
@@ -410,17 +351,27 @@ public final class XMPPStreamProcessor {
                 session.touchActivity();
                 session.incrementInboundCount();
 
-                // Check if this is a multi-device encrypted message
-                if (isMultiDeviceMessage(element, reader)) {
-                    multiDeviceHandler.handle(element, reader, session);
+                if (isGroupStanza(element, localName)) {
+                    logger.info("handling group message");
+                    if (groupHandler != null) {
+                        groupHandler.handle(element, reader, session);
+                        metrics.stanzaProcessed();
+                    } else {
+                        logger.warning("Group handler not registered");
+                        consumeElement(reader);
+                    }
                 } else {
-                    StanzaHandler handler = handlers.get("message");
-                    if (handler != null) handler.handle(element, reader, session);
+                    // Check if this is a multi-device encrypted message
+                    if (isMultiDeviceMessage(element, reader)) {
+                        multiDeviceHandler.handle(element, reader, session);
+                    } else {
+                        StanzaHandler handler = handlers.get("message");
+                        if (handler != null) handler.handle(element, reader, session);
+                    }
                 }
 
                 metrics.stanzaProcessed();
             }
-
 
             default -> {
                 logger.fine("Unhandled: " + localName + " ns=" + ns);
@@ -429,8 +380,67 @@ public final class XMPPStreamProcessor {
         }
     }
 
+    /**
+     * Determines if a stanza should be routed to the group handler.
+     *
+     * RULES:
+     *
+     * 1. <message type='groupchat'>             → GROUP
+     *    Standard XEP-0045 group chat message
+     *
+     * 2. <message to='group@conference.domain'> → GROUP
+     *    Message addressed to a MUC room
+     *
+     * 3. <presence to='group@conference.domain/nick'> → GROUP
+     *    Join/leave/update presence in a MUC room
+     *
+     * 4. <iq>... <* xmlns='urn:xmpp:group:0'/> → GROUP
+     *    Custom group management IQ
+     *
+     * 5. Everything else → 1-1 handlers
+     */
+    private boolean isGroupStanza(StartElement element, String localName) {
+        // Rule 1: groupchat message type
+        if ("message".equals(localName)) {
+            String type = getAttribute(element, "type");
+            if ("groupchat".equals(type)) return true;
+        }
+
+        // Rule 2 & 3: addressed to MUC domain
+        String to = getAttribute(element, "to");
+        if (to != null && to.contains("@")) {
+            int atIdx = to.indexOf('@');
+            int slashIdx = to.indexOf('/');
+            String domain = (slashIdx == -1)
+                    ? to.substring(atIdx + 1)
+                    : to.substring(atIdx + 1, slashIdx);
+
+            if (mucDomain.equalsIgnoreCase(domain)) return true;
+        }
+
+        // Rule 4: IQ with group namespace
+        // (requires peeking child - more expensive but accurate)
+        if ("iq".equals(localName)) {
+            // We can't easily peek without consuming; the group handler
+            // itself will detect the child namespace and either handle
+            // or pass through. For now, default to IQHandler unless we
+            // know it's a group op.
+            // Pattern: check for known group ID prefix in 'to'
+            String iqTo = getAttribute(element, "to");
+            if (iqTo != null && iqTo.contains(mucDomain)) return true;
+        }
+
+        return false;
+    }
+
+    private String getAttribute(StartElement element, String name) {
+        Attribute attr = element.getAttributeByName(new QName(name));
+        return attr != null ? attr.getValue() : null;
+    }
+
     // Helper to detect multi-device messages
     private boolean isMultiDeviceMessage(StartElement element, XMLEventReader reader) {
+        //TODO:
         // Peek at first child without consuming
         // If it's <multi-encrypted xmlns='urn:xmpp:omemo:2'> → route to multi-device handler
         // This requires a lookahead mechanism - simpler: look at child namespaces
@@ -454,7 +464,7 @@ public final class XMPPStreamProcessor {
      * After SM resumption, deliver any offline messages that arrived
      * while the client was disconnected.
      * <p>
-     * Note: This is DIFFERENT from the unacked queue retransmission.
+     * <b>Note: This is DIFFERENT from the unacked queue retransmission.</b>
      * <p>
      *   SM retransmission:
      *     Stanzas WE sent but client didn't confirm receiving.
@@ -473,13 +483,12 @@ public final class XMPPStreamProcessor {
         if (session.getContactId() == null) return;
 
         Thread.ofVirtual()
-                .name("offline-delivery-" + session.getUid())
+                .name("offline-delivery-" + session.getSessionId())
                 .start(() -> {
                     try {
                         java.util.List<DatabaseManager
                                 .EncryptedOfflineMessage> messages =
-                                db.fetchEncryptedOfflineMessages(
-                                        session.getContactId());
+                                db.fetchEncryptedOfflineMessages(session.getContactId());
 
                         if (messages.isEmpty()) return;
 
@@ -578,18 +587,18 @@ public final class XMPPStreamProcessor {
                         "xmlns='jabber:client' " +
                         "xmlns:stream='http://etherx.jabber.org/streams'>",
                 escapeXml(domain),
-                session.getUid()
+                session.getSessionId()
         ));
 
         // Advertise features appropriate for current state
         session.writeXML(buildStreamFeatures(session));
-        logger.info("Stream opened uid=" + session.getUid()
+        logger.info("Stream opened uid=" + session.getSessionId()
                 + " domain=" + domain + " state=" + session.getSessionState());
     }
 
     /**
      * Builds the <stream:features> element based on current session state.
-     *
+     * <p>
      *   STREAM_OPENED       → STARTTLS (required)
      *   STARTTLS_NEGOTIATED → SASL mechanisms
      *   AUTHENTICATED       → Resource bind (required) + optional features
@@ -638,8 +647,6 @@ public final class XMPPStreamProcessor {
             );
             throw new StartTLSException("Duplicate STARTTLS");
         }
-
-        logger.info("STARTTLS requested uid=" + session.getUid());
 
         // Must write to the PLAIN socket (before upgrade)
         OutputStreamWriter writer = new OutputStreamWriter(

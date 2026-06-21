@@ -4,6 +4,11 @@ import javax.net.ssl.HttpsURLConnection;
 import java.io.*;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyFactory;
+import java.security.PrivateKey;
+import java.security.Signature;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Base64;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
 
@@ -11,18 +16,18 @@ import streammessenger.db.DatabaseManager;
 
 /**
  * Push notification delivery via FCM (Android) and APNs (iOS).
- *
+ * <p>
  * Called when:
  *  - A message arrives for an offline user
  *  - A group message arrives and members are offline
  *  - A status is posted by a contact
  *  - A call is incoming
- *
+ * <p>
  * Notification payload is MINIMAL by design:
  *  - We do NOT send message content in push
  *  - We send only: "you have a new message from X"
  *  - Client fetches the actual content via XMPP on wake
- *
+ * <p>
  * Why minimal push:
  *  - Push passes through Google/Apple servers
  *  - Sending ciphertext in push is redundant (app will fetch anyway)
@@ -45,8 +50,14 @@ public final class PushNotificationService {
     private static final String APNS_SANDBOX_URL =
             "https://api.sandbox.push.apple.com/3/device/%s";
 
+    //TODO: This should be hidden
+    private final String PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC251yyFa56j8Uu\nZBYCMd5WvyuMa2rPVj614Ynbk2tHj8+HW8tQ+ZaBgK4IrhO7v4p/oMDIS3+knKE0\n49jZaTy49Pp09GPIdcO7rB0VhObvAShcvlqUR/dYBD66TwJC3z1fcQiECzeJ+ClA\noygBdiLrf4n+hywl4Sk01Odt00K5VVYwEhDuSocbY+AuYUxJEVWJnXSKodTND66Y\njegQBDU8pBONvdSXjRx/09sFV034QfYMPYatvjiGm19D3sTUHFEvH1Hkod2H8u21\nu+/wV6gDXMhiOsq7Et9VJme+rBa9pqxXR8XkCjYkf5u1YWyrQ9PCvqfFEDyCjY/T\nPEhVYaRPAgMBAAECggEAVJSwKpBZM8c5bYcOIGy0P1Q/TLu91GyzKkPGjvpgsWKh\nGxzJbERHI9MAZ/YsHPXqE7Qggl9bgyGFcOJuvLdsQ7HSAnSjkidXYPmqJ3HioyLb\naewDEjAngxXPdjOkPY1jobexMvLG97ABT6lDjk11v4amp0QWF9xERHCyJvj7kZ1L\nIxbBsBezIn5E7aLagYZ4nD7U9CCSmAoyuO9jk4KNpgwpPXvRFpCGVirLCr5Xgog6\n164rOsgKTl1kCigh1PKOVV7siXd1rm6pkqpll9ZKSrwq68JTOpACTV/NNnwXPGSb\ni0mHZJ6tnXyFVt/bDe/2TVaDWl8gZku4p7QSBczjqQKBgQDhtV1DWqJssmyyi8bR\nQVX5DnQ8XgGyKcM81P1EdF0gT+Q42zAr/EMdCuBL3ZkCrvwYGiLl+w/y+YQmXtmP\njSm+0oBQbwkoSxF+3NdUWHUKK/jhQueVl/FrHTLMBIRyRuBTHgjyrghBeekr+ZEm\n7uAZ5ZF0tK4HZIadOAAwrju4WQKBgQDPc1zKgwRWr7kRYXHjHZWk5DaI1MayyAUF\nw2UmQlY88iyNcI94S3fF72YDxTwqWAchxZ0HkPzLaGhmJ0XwFSUQ0qy3TLAELAnd\nW2Q3BV0tfcwQ6z0RaEAwjOTiZ8F2Bss27OI0vk3b2PtYn5phhRqEjnKSxin4FXtg\ntboZXmcs5wKBgGL66f9Ti88nH8vcyD+T62PhFtAyWYQMFHZk4PxYG07EOk1EsgdY\nBQaDcoFSmHs4yYy4SX2ZcBEZov5Ash/lw9zO6z5asyVcZjvAFR4D/K+NQQNoF67e\nhxx2HYSipoKG2nEYxsvFzhEIqVyDgUgVkWlJ51PKuFa9mtrvaAXxIndhAoGAVI3Y\nzFIKeqq06/ijysZMMCE0eSEAu+363hZ+K9HuBHlQ33V5hLZ94xdopTDHDRtEDOfW\n0TavUtkDdF+difWUXf8AltWTCKBKhQazGhn9mIUln9/BzE6Jm0BSKlXP7KNoQMLc\nkFLguTL/f2fOLOFrpYvJ9zj98jgPSaPIbn6j3xECgYEAwSwOeCsj6oj0pGNyjT6M\n6KNZJtrI0V0auQHOHcJXylmt3lUyODRVxi6xN0I55L5H1MK11IQu8S3yKkGa/2lm\nQ6WAw4PbKpwEg1YFrDwq0Wnraz0UXXFehdD6aDp6s+FasP+AMRl8LHyhCPu2jVd1\ngxgU60W2n/XzBW3F5iByE0s=\n-----END PRIVATE KEY-----\n";
+
+    //TODO: This should be hidden
+    private final String CLIENT_EMAIL = "firebase-adminsdk-x7ial@stream-6fa32.iam.gserviceaccount.com";
+
     private final String fcmProjectId;
-    private final String fcmServiceAccountJson; // OAuth2 access token source
+    //private final String fcmServiceAccountJson; // OAuth2 access token source
     private final String apnsBundleId;
     private final boolean isDev;
     private final DatabaseManager db;
@@ -71,7 +82,7 @@ public final class PushNotificationService {
                                     boolean isDev,
                                     DatabaseManager db) {
         this.fcmProjectId          = fcmProjectId;
-        this.fcmServiceAccountJson = fcmServiceAccountJson;
+        //this.fcmServiceAccountJson = fcmServiceAccountJson;
         this.apnsBundleId          = apnsBundleId;
         this.isDev                 = isDev;
         this.db                    = db;
@@ -121,6 +132,24 @@ public final class PushNotificationService {
         executor.execute(() -> {
             DatabaseManager.PushTarget target = db.getPushTarget(toUserId);
             if (target == null || target.pushToken() == null) return;
+
+            String emoji = "video".equals(callType) ? "📹" : "📞";
+            sendPush(target,
+                    emoji + " Incoming " + callType + " call",
+                    callerDisplayName,
+                    "call",
+                    toUserId, callId);
+        });
+    }
+
+    public void sendPushCallNotification(String toUserId,
+                                         String callerDisplayName,
+                                         String callType,
+                                         String callId){
+
+        executor.execute(() -> {
+            DatabaseManager.PushTarget target = db.getPushTarget(toUserId);
+            if(target == null || target.pushToken() == null) return;
 
             String emoji = "video".equals(callType) ? "📹" : "📞";
             sendPush(target,
@@ -197,8 +226,6 @@ public final class PushNotificationService {
                            String type,
                            String toUserId,
                            String referenceId) {
-
-
         // Idempotency key prevents duplicate pushes
         String idempotencyKey = type + ":" + toUserId + ":"
                 + System.currentTimeMillis() / 60_000; // 1-minute window
@@ -216,8 +243,7 @@ public final class PushNotificationService {
             }
         } catch (Exception e) {
             errorCode = e.getMessage();
-            logger.warning("Push failed for userId=" + toUserId
-                    + ": " + e.getMessage());
+            logger.warning("Push failed for userId=" + toUserId + ": " + e.getMessage());
         }
 
         // Log the attempt
@@ -281,7 +307,7 @@ public final class PushNotificationService {
     /**
      * Gets or refreshes the FCM OAuth2 access token.
      * FCM v1 requires OAuth2 - not the legacy server key.
-     *
+     * <p>
      * In production: use a proper OAuth2 library or Google Auth Library.
      * Here: simplified JWT-based token generation.
      */
@@ -329,7 +355,8 @@ public final class PushNotificationService {
         return fcmAccessToken;
     }
 
-    private String buildServiceAccountJWT() {
+    @Deprecated
+    private String buildServiceAccountJwt() {
         // In production: implement proper JWT signing with RS256
         // using the private key from the service account JSON
         // This placeholder shows the structure
@@ -348,15 +375,103 @@ public final class PushNotificationService {
                       "iat": %d,
                       "exp": %d
                     }
-                    """, fcmProjectId, now, now + 3600)
+                    """, CLIENT_EMAIL, now, now + 3600)
                         .getBytes());
 
         // TODO: Sign header.claims with RSA private key from service account
-        // String signature = rsaSign(header + "." + claims, privateKey);
-        // return header + "." + claims + "." + signature;
+        PrivateKey privateKey = null;
+        try{
+            privateKey = loadPrivateKey( PRIVATE_KEY);
+        } catch (Exception e) {
+            logger.info("Exception occurred: "+e.getMessage());
+        }
+        String signature = rsaSign(header + "." + claims, privateKey);
+        return header + "." + claims + "." + signature;
 
-        throw new UnsupportedOperationException(
-            "Implement JWT signing with service account private key");
+        /*throw new UnsupportedOperationException(
+            "Implement JWT signing with service account private key");*/
+    }
+
+    private String buildServiceAccountJWT() {
+
+        long now = System.currentTimeMillis() / 1000;
+
+        String headerJson =
+                "{\"alg\":\"RS256\",\"typ\":\"JWT\"}";
+
+        String claimsJson = String.format(
+                "{\"iss\":\"%s\","
+                        + "\"scope\":\"https://www.googleapis.com/auth/firebase.messaging\","
+                        + "\"aud\":\"https://oauth2.googleapis.com/token\","
+                        + "\"iat\":%d,"
+                        + "\"exp\":%d}",
+                CLIENT_EMAIL,
+                now,
+                now + 3600
+        );
+
+        String header = Base64.getUrlEncoder()
+                .withoutPadding()
+                .encodeToString(
+                        headerJson.getBytes(StandardCharsets.UTF_8));
+
+        String claims = Base64.getUrlEncoder()
+                .withoutPadding()
+                .encodeToString(
+                        claimsJson.getBytes(StandardCharsets.UTF_8));
+
+        String unsignedJwt = header + "." + claims;
+
+        PrivateKey privateKey;
+
+        try {
+            privateKey = loadPrivateKey(PRIVATE_KEY);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
+        String signature =
+                rsaSign(unsignedJwt, privateKey);
+
+        return unsignedJwt + "." + signature;
+    }
+
+    private PrivateKey loadPrivateKey(String pem)
+            throws Exception {
+
+        String content = pem
+                .replace("-----BEGIN PRIVATE KEY-----", "")
+                .replace("-----END PRIVATE KEY-----", "")
+                .replace("\\n", "")
+                .replace("\n", "");
+
+        byte[] decoded =
+                Base64.getDecoder().decode(content);
+
+        PKCS8EncodedKeySpec spec =
+                new PKCS8EncodedKeySpec(decoded);
+
+        KeyFactory keyFactory =
+                KeyFactory.getInstance("RSA");
+
+        return keyFactory.generatePrivate(spec);
+    }
+
+    private String rsaSign(String data, PrivateKey privateKey) {
+        try {
+            Signature signature = Signature.getInstance("SHA256withRSA");
+            signature.initSign(privateKey);
+            signature.update(data.getBytes(StandardCharsets.UTF_8));
+
+            byte[] signed = signature.sign();
+
+            return Base64.getUrlEncoder()
+                    .withoutPadding()
+                    .encodeToString(signed);
+
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     // =========================================================================

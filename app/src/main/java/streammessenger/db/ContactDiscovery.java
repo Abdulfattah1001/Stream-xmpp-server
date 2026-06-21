@@ -6,24 +6,28 @@ import java.util.logging.Logger;
 
 /**
  * Handles phonebook upload and contact discovery.
- *
+ * <p>
  * THE FLOW:
  * ─────────
+ * <p>
+ *
  * 1. App uploads hashed phone numbers from device phonebook
  * 2. We store all hashes (used later for two-way discovery)
  * 3. We return matching registered users
  * 4. For each match, we auto-create roster entries on BOTH sides:
  *    - "both" if both users have each other
  *    - "from"/"to" if only one direction
- *
+ * <p>
  * THE MAGIC OF AUTOMATIC ROSTER:
  * ──────────────────────────────
+ * <p>
+ *
  * When User A uploads their phonebook with Bob's number:
  *   - We check: does Bob's phonebook have A?
  *   - If YES → subscription='both' on both sides (mutual connection)
  *   - If NO  → A sees Bob as 'to' (subscribed to Bob's presence)
  *              Bob doesn't see A in roster yet
- *
+ * <p>
  * When Bob LATER uploads his phonebook with A's number:
  *   - We detect the mutual connection
  *   - Upgrade BOTH sides to 'both'
@@ -98,7 +102,7 @@ public final class ContactDiscovery {
 
     /**
      * Finds registered users matching the hashes AND creates roster entries.
-     *
+     * <p>
      * For each match:
      *   - Check if mutual (does the other side have me too?)
      *   - Create/update roster entries accordingly

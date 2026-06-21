@@ -1,10 +1,5 @@
 package streammessenger.muc.service;
 
-import com.xmpp.db.ConnectionPool;
-import com.xmpp.muc.exception.MucException;
-import com.xmpp.muc.model.*;
-import com.xmpp.muc.repository.GroupRepository;
-import com.xmpp.session.SessionRegistry;
 
 import java.security.SecureRandom;
 import java.sql.*;
@@ -12,6 +7,13 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 import java.util.logging.Logger;
+
+import streammessenger.db.ConnectionPool;
+import streammessenger.muc.exceptions.MucException;
+import streammessenger.muc.model.Affiliation;
+import streammessenger.muc.model.GroupRoom;
+import streammessenger.muc.repository.GroupRepository;
+import streammessenger.session.SessionRegistry;
 
 /**
  * Handles direct invitations and shareable join links.
@@ -39,11 +41,11 @@ public final class InvitationService {
     private final String inviteUrlBase;
 
     public InvitationService(ConnectionPool pool,
-                              GroupRepository repository,
-                              GroupRegistry registry,
-                              MembershipService membershipService,
-                              SessionRegistry sessionRegistry,
-                              String inviteUrlBase) {
+                             GroupRepository repository,
+                             GroupRegistry registry,
+                             MembershipService membershipService,
+                             SessionRegistry sessionRegistry,
+                             String inviteUrlBase) {
         this.pool              = pool;
         this.repository        = repository;
         this.registry          = registry;
@@ -217,7 +219,7 @@ public final class InvitationService {
 
     /**
      * Generates a new join link.
-     *
+     * <p>
      * Security:
      *   - 256 bits of entropy (43 chars Base64Url)
      *   - Unguessable: 2^256 search space
@@ -234,14 +236,14 @@ public final class InvitationService {
                     "Group not found");
         }
 
-        GroupRepository.MemberRecord member =
-                repository.getMember(groupId, creatorUserId);
+        GroupRepository.MemberRecord member = repository.getMember(groupId, creatorUserId);
         if (member == null || !member.affiliation().canModerate()) {
             throw new MucException(MucException.Code.NOT_AUTHORIZED,
                     "Only admins can create join links");
         }
 
         String token = generateLinkToken();
+        logger.info("The generated invitation link is: "+token);
         Instant expiresAt = expiresInHours != null
                 ? Instant.now().plus(expiresInHours, ChronoUnit.HOURS)
                 : null;
@@ -249,8 +251,8 @@ public final class InvitationService {
         String sql = """
             INSERT INTO group_join_links (
                 link_token, group_id, created_by_user_id,
-                one_time, max_uses, expires_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                one_time, max_uses
+            ) VALUES (?, ?, ?, ?, ?)
             """;
 
         try (Connection conn = pool.getConnection();
@@ -262,8 +264,8 @@ public final class InvitationService {
             stmt.setBoolean(4, oneTime);
             if (maxUses != null) stmt.setInt(5, maxUses);
             else stmt.setNull(5, Types.INTEGER);
-            if (expiresAt != null) stmt.setTimestamp(6, Timestamp.from(expiresAt));
-            else stmt.setNull(6, Types.TIMESTAMP);
+            //if (expiresAt != null) stmt.setTimestamp(6, Timestamp.from(expiresAt));
+            //else stmt.setNull(6, Types.TIMESTAMP);
 
             stmt.executeUpdate();
             conn.commit();
@@ -280,7 +282,7 @@ public final class InvitationService {
 
     /**
      * Joins a group via link.
-     *
+     * <p>
      * Atomicity: uses single UPDATE that fails if link already used.
      * No race condition possible.
      */
@@ -341,8 +343,7 @@ public final class InvitationService {
         }
 
         if (groupId != null) {
-            membershipService.addMember(groupId, userId, userId,
-                    userJid, Affiliation.MEMBER);
+            membershipService.addMemberViaLink(groupId, userId, userJid, Affiliation.MEMBER);
         }
 
         return groupId;
@@ -381,7 +382,8 @@ public final class InvitationService {
     }
 
     private String generateLinkToken() {
-        byte[] bytes = new byte[32];
+        //byte[] bytes = new byte[32];
+        byte[] bytes = new byte[16]; // For short lenght and it is also secure
         secureRandom.nextBytes(bytes);
         return java.util.Base64.getUrlEncoder()
                 .withoutPadding().encodeToString(bytes);
@@ -415,6 +417,8 @@ public final class InvitationService {
         return s.replace("&", "&amp;").replace("<", "&lt;")
                 .replace(">", "&gt;").replace("'", "&apos;");
     }
+
+
 
     public record JoinLink(String token, String url,
                             boolean oneTime, Instant expiresAt) {}

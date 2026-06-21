@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.logging.Logger;
 
 import streammessenger.exception.StartTLSException;
@@ -39,41 +40,44 @@ public final class ConnectionHandler implements Runnable {
     private static final Logger logger = Logger.getLogger(ConnectionHandler.class.getName());
 
     private final Socket socket;
-    private final String uid;
+    private final String sessionId;
     private final TLSUpgrader tlsUpgrader;
     private final XMPPStreamProcessor streamProcessor;
     private final SessionRegistry registry;
     private final ServerMetrics metrics;
+    private final ScheduledExecutorService scheduler;
 
     public ConnectionHandler(
             Socket socket,
-            String uid,
+            String sessionId,
             TLSUpgrader tlsUpgrader,
             XMPPStreamProcessor streamProcessor,
             SessionRegistry registry,
-            ServerMetrics metrics) {
+            ServerMetrics metrics, ScheduledExecutorService scheduledExecutorService) {
         this.socket = socket;
-        this.uid = uid;
+        this.sessionId = sessionId;
         this.tlsUpgrader = tlsUpgrader;
         this.streamProcessor = streamProcessor;
         this.registry = registry;
         this.metrics = metrics;
+        this.scheduler = scheduledExecutorService;
     }
 
     @Override
     public void run() {
-        Session session = new Session(socket, uid);
+
+        Session session = new Session(socket, sessionId, scheduler);
         registry.register(session);
         metrics.connectionAccepted();
 
-        logger.info("Connection accepted uid=" + uid
+        logger.info("Connection accepted uid=" + session
                 + " from=" + socket.getInetAddress().getHostAddress());
 
         try {
             runConnectionLifecycle(session);
         } catch (Exception e) {
             // Top-level safety net - should never reach here in normal operation
-            logger.warning("Unhandled exception in connection uid=" + uid
+            logger.warning("Unhandled exception in connection uid=" + sessionId
                     + ": " + e.getClass().getSimpleName() + ": " + e.getMessage());
         } finally {
             cleanup(session);
@@ -100,11 +104,10 @@ public final class ConnectionHandler implements Runnable {
 
             // Phase 3: TLS stream - expect SASL auth then stanza exchange
             try {
-                logger.info("After TLS Upgrade");
                 processStream(session);
             } catch (StartTLSException nested) {
                 // STARTTLS inside a TLS stream is a protocol error
-                logger.warning("Nested STARTTLS attempt uid=" + uid);
+                logger.warning("Nested STARTTLS attempt uid=" + sessionId);
                 session.writeStreamError(
                     StreamException.Condition.POLICY_VIOLATION,
                     "STARTTLS already negotiated"
@@ -132,13 +135,13 @@ public final class ConnectionHandler implements Runnable {
             throw e; // Propagate intentionally to be handled outside with the custom STARTTLSException handler
 
         } catch (SocketTimeoutException e) {
-            logger.info("Socket timeout for uid=" + uid + " (client idle). Closing.");
+            logger.info("Socket timeout for uid=" + sessionId + " (client idle). Closing.");
             session.writeStreamError(
                 StreamException.Condition.CONNECTION_TIMEOUT, "Idle timeout"
             );
 
         } catch (XMLStreamException e) {
-            logger.warning("XML parse error uid=" + uid + ": " + e.getMessage());
+            logger.warning("XML parse error uid=" + sessionId + ": " + e.getMessage());
             session.writeStreamError(
                 StreamException.Condition.NOT_WELL_FORMED,
                 "XML parse error"
@@ -146,10 +149,10 @@ public final class ConnectionHandler implements Runnable {
 
         } catch (IOException e) {
             // Client disconnected - not an error, just clean up
-            logger.info("Client disconnected uid=" + uid + ": " + e.getMessage());
+            logger.info("Client disconnected uid=" + sessionId + ": " + e.getMessage());
 
         } catch (Exception e) {
-            logger.warning("Stream processing error uid=" + uid
+            logger.warning("Stream processing error uid=" + sessionId
                     + ": " + e.getClass().getSimpleName() + ": " + e.getMessage());
             session.writeStreamError(
                 StreamException.Condition.INTERNAL_SERVER_ERROR,
@@ -171,17 +174,17 @@ public final class ConnectionHandler implements Runnable {
             session.setSSlSocket(sslSocket);
             session.setSessionState(SessionState.STARTTLS_NEGOTIATED);
             metrics.tlsSuccess();
-            logger.info("TLS upgrade successful uid=" + uid);
+            logger.info("TLS upgrade successful sessionID=" + sessionId);
             return sslSocket;
 
         } catch (SSLHandshakeException e) {
             metrics.tlsFailure();
-            logger.warning("TLS handshake failed uid=" + uid + ": " + e.getMessage());
+            logger.warning("TLS handshake failed sessionId=" + sessionId + ": " + e.getMessage());
             return null;
 
         } catch (IOException e) {
             metrics.tlsFailure();
-            logger.warning("TLS upgrade I/O error uid=" + uid + ": " + e.getMessage());
+            logger.warning("TLS upgrade I/O error uid=" + sessionId + ": " + e.getMessage());
             return null;
         }
     }
@@ -208,7 +211,7 @@ public final class ConnectionHandler implements Runnable {
                 return socket.getInputStream();
             }
         } catch (IOException e) {
-            logger.warning("Cannot get InputStream for uid=" + uid + ": " + e.getMessage());
+            logger.warning("Cannot get InputStream for uid=" + sessionId + ": " + e.getMessage());
         }
         return null;
     }
@@ -242,10 +245,12 @@ public final class ConnectionHandler implements Runnable {
             metrics.sessionDeAuthenticated();
         }
 
+        String lastXml = session.getSmState().getLastXml();
+        logger.info("Last handled XML is: "+lastXml); // TODO: Parse the xml and gets the ulid from there
         session.closeQuietly();
         metrics.connectionClosed();
 
-        logger.info("Connection closed uid=" + uid
+        logger.info("Connection closed uid=" + sessionId
                 + " contactId=" + session.getContactId());
     }
 }

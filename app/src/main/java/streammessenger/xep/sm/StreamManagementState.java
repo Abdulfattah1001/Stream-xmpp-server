@@ -4,27 +4,28 @@ import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Logger;
 
 /**
  * Holds the complete Stream Management (XEP-0198) state for one session.
- *
+ * <p>
  * What Stream Management solves:
  *   Mobile clients frequently lose connectivity (WiFi → 4G, tunnels, etc.)
  *   Without SM: connection drops = all in-flight messages lost forever.
  *   With SM:    server tracks what client has received; on reconnect,
  *               retransmits only the messages that were lost.
- *
+ * <p>
  * How it works:
  *   Server sends stanza → adds to unackedQueue with seqNum N
  *   Client receives it  → sends <a h='N'/>
  *   Server removes everything up to N from unackedQueue
- *
+ * <p>
  *   Client disconnects  → unackedQueue still has messages
  *   Client reconnects   → sends <resume previd='smId' h='M'/>
  *   Server retransmits  → everything in unackedQueue with seqNum > M
- *
+ * <p>
  * Thread safety:
  *   outboundSeq and inboundCount are AtomicLong (lock-free reads).
  *   unackedQueue is guarded by queueLock (read/write lock).
@@ -47,6 +48,8 @@ public final class StreamManagementState {
 
     // Wall clock time when SM was enabled - used to expire old SM states
     private final long enabledAt;
+
+    private volatile String lastXml= null;
 
     // Sequence number for our outbound stanzas
     // Incremented each time we send a stanza tracked by SM
@@ -83,7 +86,7 @@ public final class StreamManagementState {
     /**
      * Records that a stanza was sent to the client.
      * Adds it to the unacked queue with the next sequence number.
-     *
+     * <p>
      * Called by Session.writeXML() for every stanza (not SM control frames).
      */
     public void trackOutbound(String xml) {
@@ -95,13 +98,26 @@ public final class StreamManagementState {
             if (unackedQueue.size() >= MAX_UNACKED_QUEUE_SIZE) {
                 // Drop oldest - client is too far behind, resumption won't work anyway
                 unackedQueue.poll();
-                logger.warning("SM unacked queue full (smId=" + smId
-                        + ") - dropping oldest stanza");
+                logger.warning("SM unacked queue full (smId=" + smId + ") - dropping oldest stanza");
             }
             unackedQueue.add(stanza);
         } finally {
             queueLock.writeLock().unlock();
         }
+    }
+
+    private String extractAttr(String xml, String attr) {
+        String search = attr + "='";
+        int s = xml.indexOf(search);
+        if (s == -1) {
+            search = attr + "=\"";
+            s = xml.indexOf(search);
+            if (s == -1) return null;
+        }
+        s += search.length();
+        char quote = xml.charAt(s - 1);
+        int e = xml.indexOf(quote, s);
+        return e == -1 ? null : xml.substring(s, e);
     }
 
     /**
@@ -123,12 +139,24 @@ public final class StreamManagementState {
         queueLock.writeLock().lock();
         try {
             // Remove all stanzas that the client confirmed receiving
-            unackedQueue.removeIf(s -> s.seqNum() <= h);
+            unackedQueue.removeIf(s -> {
+                if(s.seqNum() == h){
+
+                    lastXml  = s.xml();
+                    int memberStart = s.xml().indexOf("<message ");
+                    if(memberStart != -1){
+                        String eventRefId = extractAttr(s.xml(), "id");
+                        logger.info("Ack Message ID is: "+eventRefId);
+                    }
+                }
+                return s.seqNum() <= h;
+            });
+
         } finally {
             queueLock.writeLock().unlock();
         }
 
-        logger.fine("SM ack processed h=" + h
+        logger.info("SM ack processed h=" + h
                 + " remainingUnacked=" + getUnackedCount()
                 + " smId=" + smId);
     }
@@ -194,6 +222,10 @@ public final class StreamManagementState {
         } finally {
             queueLock.readLock().unlock();
         }
+    }
+
+    public String getLastXml() {
+        return lastXml;
     }
 
     /**

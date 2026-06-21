@@ -1,9 +1,9 @@
 package streammessenger.group.service;
 
-import com.xmpp.group.model.*;
-import com.xmpp.group.repository.GroupRepository;
-import com.xmpp.session.Session;
-import com.xmpp.session.SessionRegistry;
+import streammessenger.group.model.*;
+import streammessenger.group.repository.GroupRepository;
+import streammessenger.session.Session;
+import streammessenger.session.SessionRegistry;
 
 import java.util.List;
 import java.util.concurrent.*;
@@ -11,14 +11,15 @@ import java.util.logging.Logger;
 
 /**
  * Notifies online group members of state changes in real-time.
- *
+ * <p>
  * KEY CONCEPT: This is INCREMENTAL push.
  * We don't push the full group state on every change.
  * We push the EVENT, which the client applies to its local state.
- *
+ * <p>
  * For offline users: they catch up via delta sync on next connect.
  * No "messages waiting" - they just sync from their last known version.
  */
+@SuppressWarnings("unused")
 public final class GroupEventNotifier {
 
     private static final Logger logger =
@@ -47,7 +48,7 @@ public final class GroupEventNotifier {
 
     /**
      * Two notifications happen:
-     *
+     * <p>
      * 1. To existing members:
      *    <message><event xmlns='urn:xmpp:group:0' type='member_added'>
      *      <group_id>...</group_id>
@@ -55,7 +56,7 @@ public final class GroupEventNotifier {
      *      <actor>alice_uid</actor>
      *      <member jid='bob' display_name='Bob' is_admin='false'/>
      *    </event></message>
-     *
+     * <p>
      * 2. To the new member:
      *    The full group snapshot (since they have nothing to sync from):
      *    <message><snapshot xmlns='urn:xmpp:group:0'>
@@ -104,6 +105,65 @@ public final class GroupEventNotifier {
 
         // Send full snapshot to new member
         sendFullSnapshot(group, newMember.userJid());
+    }
+
+    // =========================================================================
+    // Notification: someone joined via invite link
+    // =========================================================================
+
+    /**
+     * Slightly different from notifyMemberAdded because:
+     *   1. No "actor" - the new member is the actor
+     *   2. Different event type so clients can show
+     *      "Alice joined via invite link" instead of
+     *      "Bob added Alice"
+     * <p>
+     * Same flow otherwise:
+     *   - Existing members get the event (incremental update)
+     *   - New member gets the full snapshot (initial state)
+     */
+    public void notifyMemberJoinedViaLink(String groupId, long version,
+                                          GroupMember newMember,
+                                          String linkToken) {
+        Group group = repository.get(groupId);
+        if (group == null) return;
+
+        // Event for existing members - note: actor is the new member
+        // themselves, not someone else
+        String memberJoinedEvent = String.format(
+                "<message from='%s' type='groupchat'>" +
+                        "<event xmlns='%s' type='member_joined_via_link'>" +
+                        "<group_id>%s</group_id>" +
+                        "<version>%d</version>" +
+                        "<member jid='%s' user_id='%s' display_name='%s' display_status='%s' phone_number='%s'" +
+                        " is_admin='false' joined_via='link'/>" +
+                        "</event></message>",
+                escapeXml(group.jid()),
+                GROUP_NS,
+                group.groupId(),
+                version,
+                escapeXml(newMember.userJid()),
+                escapeXml(newMember.userId()),
+                escapeXml(newMember.displayName() != null
+                        ? newMember.displayName() : ""),
+                escapeXml(newMember.displayStatus()),
+                escapeXml(newMember.phoneNumber())
+        );
+
+        // Send to all existing members EXCEPT the new one
+        List<String> memberJids = repository.listMemberJids(groupId);
+        for (String jid : memberJids) {
+            if (jid.equals(newMember.userJid())) continue;
+            deliverToMember(jid, memberJoinedEvent);
+        }
+
+        // Send full snapshot (including members list) to the new joiner
+        logger.info("Sending full snapshot after joining via link");
+        sendFullSnapshot(group, newMember.userJid());
+
+        logger.info("Notified " + (memberJids.size() - 1)
+                + " existing members + sent snapshot to new joiner "
+                + newMember.userJid());
     }
 
     // =========================================================================
@@ -316,17 +376,18 @@ public final class GroupEventNotifier {
 
     /**
      * Sends the complete current state of the group to a newly added member.
-     *
+     * <p>
      * They have no local state, so we can't send a delta.
      * We send everything: group info, settings, all members.
      */
     public void sendFullSnapshot(Group group, String targetJid) {
+        logger.info("Sending the group full snapshot");
         GroupSettings settings = repository.getSettings(group.groupId());
         List<GroupMember> members = repository.listMembers(group.groupId());
 
         StringBuilder xml = new StringBuilder();
         xml.append(String.format(
-            "<message from='%s' to='%s'>" +
+            /*"<message from='%s' to='%s' type='groupchat'>" +*/
             "<snapshot xmlns='%s'>" +
             "<group_id>%s</group_id>" +
             "<jid>%s</jid>" +
@@ -345,8 +406,8 @@ public final class GroupEventNotifier {
             "<approval_required>%b</approval_required>" +
             "</settings>" +
             "<members>",
-            escapeXml(group.jid()),
-            escapeXml(targetJid),
+            //escapeXml(group.jid()),
+            //escapeXml(targetJid),
             GROUP_NS,
             group.groupId(),
             escapeXml(group.jid()),
@@ -365,11 +426,15 @@ public final class GroupEventNotifier {
         ));
 
         for (GroupMember m : members) {
+            logger.info("Group Admin status: "+m.isAdmin()+"=="+m.isOwner());
             xml.append(String.format(
-                "<member user_id='%s' jid='%s' display_name='%s'" +
+                "<member user_id='%s' jid='%s' phone_number='%s' avatar_url='%s' display_status='%s' nickname='testing nickname' display_name='%s'" +
                 " is_admin='%b' is_owner='%b' joined_at='%s'/>",
                 escapeXml(m.userId()),
                 escapeXml(m.userJid()),
+                escapeXml(m.phoneNumber()),
+                escapeXml(m.avatarUrl()),
+                escapeXml(m.displayStatus()),
                 escapeXml(m.displayName() != null ? m.displayName() : ""),
                 m.isAdmin(),
                 m.isOwner(),
@@ -377,7 +442,7 @@ public final class GroupEventNotifier {
             ));
         }
 
-        xml.append("</members></snapshot></message>");
+        xml.append("</members></snapshot>"/*</message>"*/);
 
         deliverToMember(targetJid, xml.toString());
 
@@ -404,6 +469,7 @@ public final class GroupEventNotifier {
      * If offline: nothing happens. They'll catch up via delta sync.
      */
     private void deliverToMember(String memberJid, String stanza) {
+        logger.info("Delivering to member whose jid is: "+memberJid);
         notificationPool.execute(() -> {
             try {
                 // Send to ALL their active sessions (multi-device)

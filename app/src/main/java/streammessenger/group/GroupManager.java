@@ -15,14 +15,14 @@ import streammessenger.session.SessionRegistry;
 
 /**
  * Manages group messaging operations.
- *
+ * <p>
  * Group JID format: g_7f3a9b2c@conference.yourdomain.com
- *
+ * <p>
  * Message routing:
  *   Sender → Server → ALL group members
  *   Online members: direct XMPP delivery
  *   Offline members: stored + push notification
- *
+ * <p>
  * Roles:
  *   owner  → Can delete group, promote admins, change all settings
  *   admin  → Can add/remove members, change name/avatar

@@ -1,20 +1,23 @@
 package streammessenger.muc.service;
 
-import com.xmpp.muc.model.*;
-import com.xmpp.session.Session;
-import com.xmpp.session.SessionRegistry;
 
 import java.util.logging.Logger;
 
+import streammessenger.db.DatabaseManager;
+import streammessenger.muc.model.GroupRoom;
+import streammessenger.muc.model.Occupant;
+import streammessenger.session.Session;
+import streammessenger.session.SessionRegistry;
+
 /**
  * Handles XEP-0045 §7.2 presence broadcast.
- *
+ * <p>
  * Presence broadcasts happen on:
  *   - User joins room (§7.2.3)
  *   - User leaves room (§7.14)
  *   - Role/affiliation changes (§9, §10)
  *   - Nickname changes (§7.6)
- *
+ * <p>
  * IMPORTANT: presence stanzas in MUC have full room context:
  *   - from = roomjid/nick (NOT user's real JID)
  *   - includes <x xmlns='...muc#user'> with item info
@@ -27,10 +30,12 @@ public final class PresenceBroadcaster {
     private static final String MUC_USER_NS =
             "http://jabber.org/protocol/muc#user";
 
-    private final SessionRegistry sessionRegistry;
+    private final streammessenger.session.SessionRegistry sessionRegistry;
+    private final DatabaseManager databaseManager;
 
-    public PresenceBroadcaster(SessionRegistry sessionRegistry) {
+    public PresenceBroadcaster(SessionRegistry sessionRegistry, DatabaseManager db) {
         this.sessionRegistry = sessionRegistry;
+        this.databaseManager = db;
     }
 
     // =========================================================================
@@ -39,21 +44,23 @@ public final class PresenceBroadcaster {
 
     /**
      * Broadcasts that an occupant joined the room.
-     *
+     * <p>
      * Sends three things:
      *   1. To joining user: their own presence + presence of every other occupant
      *   2. To other occupants: presence of the joining user
      *   3. Room subject (XEP-0045 §7.2.15)
      */
     public void broadcastJoin(GroupRoom room, Occupant newOccupant) {
-
+        logger.info("Broadcasting the join sequence:...");
         // 1. Send presence of all existing occupants to the new user
         Session newSession = sessionRegistry
                 .getByUid(newOccupant.sessionUid())
                 .orElse(null);
 
         if (newSession != null) {
+            logger.info("The newSession is not null, broadcasting ...");
             for (Occupant existing : room.getOccupants()) {
+                logger.info("Existing occupant is: "+existing.userJid());
                 if (existing.userId().equals(newOccupant.userId())) continue;
 
                 String existingPresence = buildPresence(
@@ -61,8 +68,13 @@ public final class PresenceBroadcaster {
                         newOccupant.userJid(),
                         false
                 );
-                newSession.writeXML(existingPresence);
+
+                logger.info("XML Sent is: "+existingPresence);
+
+                boolean sent = newSession.writeXML(existingPresence);
+
             }
+
 
             // Send own presence with status 110 (self)
             String selfPresence = buildPresence(
@@ -70,6 +82,7 @@ public final class PresenceBroadcaster {
                     newOccupant.userJid(),
                     true  // include status 110
             );
+
             newSession.writeXML(selfPresence);
         }
 
@@ -84,7 +97,16 @@ public final class PresenceBroadcaster {
             );
 
             sessionRegistry.getByUid(existing.sessionUid())
-                    .ifPresent(s -> s.writeXML(presence));
+                    .ifPresent(s -> {
+                        boolean sent = s.writeXML(presence);
+                        if(!sent){
+                            // Persist till the user resume back online
+                            @SuppressWarnings("unused")
+                            boolean persist = databaseManager.persistGroupPresence(newOccupant.roomJid(room.getJid()),
+                                    newOccupant.userId(),newOccupant.affiliation().xmlValue(),
+                                    newOccupant.userJid(),newOccupant.role().xmlValue(),false);
+                        }
+                    });
         }
 
         logger.fine("Join broadcast: " + newOccupant.userId()

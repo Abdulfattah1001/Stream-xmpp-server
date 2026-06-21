@@ -40,7 +40,7 @@ import streammessenger.session.SessionRegistry;
  * 5. All encrypted versions are sent in one stanza
  * 6. Server routes each version to the correct device
  * 7. Each device decrypts its own version
- *
+ * <p>
  * DEVICE OPERATIONS:
  * ──────────────────
  *   register    → Register a new device (called on first login)

@@ -1,4 +1,4 @@
-package streammessenger.muc;
+package streammessenger.muc1;
 
 /**
  * A participant's <b>transient</b> capabilities within a room (XEP-0045 §5.1).

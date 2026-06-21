@@ -10,18 +10,15 @@ import java.util.concurrent.ExecutionException;
 
 /**
  * Parses SASL PLAIN authentication (RFC 4616).
- *
+ * <p>
  * PLAIN format (Base64 encoded): [authzid]\0authcid\0passwd [JsonWebToken]
- *
+ * <p>
  * Note: PLAIN must only be offered after TLS is established.
  * Never offer PLAIN over unencrypted connections.
  */
 public final class SASLMechanism {
-
     private SASLMechanism() {}
-
     public record Credentials(String username, String password) {}
-
 
     /**
      * Decodes a SASL PLAIN base64 payload into credentials.

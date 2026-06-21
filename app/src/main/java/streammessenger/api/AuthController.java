@@ -21,12 +21,12 @@ import streammessenger.db.DatabaseManager;
  *   POST /auth/login     → Login returning user, get session token
  *   POST /auth/logout    → Revoke session token
  *   POST /auth/discover  → Find which contacts are registered
+ *   POST /auth/links     -> Generate, revoke or reset a link for a group
  * <p>
  * Uses Java's built-in HttpServer (no framework needed).
  * In production: put Nginx in front for TLS termination.
  */
 public final class AuthController {
-
     private static final Logger logger = Logger.getLogger(AuthController.class.getName());
 
     private final HttpServer httpServer;
@@ -42,8 +42,7 @@ public final class AuthController {
         this.firebaseVerifier = firebaseVerifier;
         this.tokenService     = tokenService;
 
-        this.httpServer = HttpServer.create(
-                new InetSocketAddress(port), 50);
+        this.httpServer = HttpServer.create(new InetSocketAddress(port), 50);
 
         // Register endpoints
         httpServer.createContext("/auth/register", this::handleRegister);
@@ -58,8 +57,7 @@ public final class AuthController {
 
     public void start() {
         httpServer.start();
-        logger.info("Auth API started on port "
-                + httpServer.getAddress().getPort());
+        logger.info("Auth API started on port " + httpServer.getAddress().getPort());
     }
 
     public void stop() {
@@ -72,9 +70,10 @@ public final class AuthController {
 
     /**
      * Registers a new user.
-     *
+     * <p>
      * Request body (JSON):
-     * {
+     * <p>
+     * <pre>{
      *   "firebase_token": "eyJhbGci...",   // Firebase ID token
      *   "phone_number":   "+2348012345678",
      *   "display_name":   "Alice",
@@ -82,21 +81,23 @@ public final class AuthController {
      *   "push_token":     "fcm_token_here",
      *   "platform":       "android",
      *   "app_version":    "1.0.0"
-     * }
-     *
+     * }</pre>
+     * <p>
      * Response (JSON):
-     * {
+     * <p>
+     * <pre>{
      *   "session_token": "st_abc123...",
      *   "jid":           "u_7f3a9b2c@yourdomain.com",
      *   "user_id":       "u_7f3a9b2c",
      *   "expires_at":    "2024-12-31T00:00:00Z"
-     * }
+     * }</pre>
      */
     private void handleRegister(HttpExchange exchange) throws IOException {
         if (!isPost(exchange)) {
             sendError(exchange, 405, "Method not allowed");
             return;
         }
+
 
         try {
             String body = readBody(exchange);
@@ -111,14 +112,12 @@ public final class AuthController {
             String appVersion    = req.getString("app_version");
 
             if (firebaseToken == null || phoneNumber == null) {
-                sendError(exchange, 400,
-                    "firebase_token and phone_number are required");
+                sendError(exchange, 400, "firebase_token and phone_number are required");
                 return;
             }
 
             // 1. Verify Firebase token
-            FirebaseTokenVerifier.VerifiedToken verified =
-                    firebaseVerifier.verify(firebaseToken);
+            FirebaseTokenVerifier.VerifiedToken verified = firebaseVerifier.verify(firebaseToken);
 
             // 2. Check phone number matches Firebase claim
             if (!phoneNumber.equals(verified.phoneNumber())) {
@@ -128,9 +127,9 @@ public final class AuthController {
 
             // 3. Register or update user in DB
             DatabaseManager.UserRecord user = db.registerUser(
-                    verified.uid(),
-                    phoneNumber,
-                    displayName
+                    verified.uid(), //The assigned uid from the firebase auth service
+                    phoneNumber, //The phone number the user is using at the time
+                    displayName //Null at registering time
             );
 
             // 4. Issue session token
@@ -154,7 +153,7 @@ public final class AuthController {
                     "session_token": "%s",
                     "jid":           "%s",
                     "user_id":       "%s",
-                    "display_name":  "%s",
+                    "display_name":  "%s"
                 }
                 """,
                 token.rawToken(),
@@ -179,7 +178,7 @@ public final class AuthController {
     /**
      * Logs in a returning user.
      * Called when Firebase silently refreshes the ID token.
-     *
+     * <p>
      * Request:
      * {
      *   "firebase_token": "eyJhbGci...",
@@ -188,7 +187,7 @@ public final class AuthController {
      *   "platform":       "android",
      *   "app_version":    "1.0.1"
      * }
-     *
+     * <p>
      * Response:
      * {
      *   "session_token": "st_xyz789...",
@@ -284,7 +283,7 @@ public final class AuthController {
 
     /**
      * Revokes a session token.
-     *
+     * <p>
      * Request header: Authorization: Bearer st_abc123...
      * Request body (optional):
      * {
@@ -340,11 +339,11 @@ public final class AuthController {
 
     /**
      * Contact discovery - finds which phone numbers are registered.
-     *
+     * <p>
      * App sends hashed phone numbers from the user's phonebook.
      * Server returns which ones are registered (with their JIDs).
      * Raw phone numbers are NEVER sent to the server.
-     *
+     * <p>
      * Request:
      * {
      *   "phone_hashes": [
@@ -353,7 +352,7 @@ public final class AuthController {
      *     ...
      *   ]
      * }
-     *
+     * <p>
      * Response:
      * {
      *   "matches": [
@@ -378,8 +377,7 @@ public final class AuthController {
                 return;
             }
 
-            SessionTokenService.ValidatedToken validated =
-                    tokenService.validate(rawToken);
+            SessionTokenService.ValidatedToken validated = tokenService.validate(rawToken);
             if (validated == null) {
                 sendError(exchange, 401, "Invalid session token");
                 return;

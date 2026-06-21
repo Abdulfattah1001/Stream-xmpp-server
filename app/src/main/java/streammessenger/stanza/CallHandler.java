@@ -1,9 +1,5 @@
 package streammessenger.stanza;
 
-import com.xmpp.db.DatabaseManager;
-import com.xmpp.session.Session;
-import com.xmpp.session.SessionRegistry;
-import com.xmpp.push.PushNotificationService;
 
 import javax.xml.stream.XMLEventReader;
 import javax.xml.stream.events.StartElement;
@@ -11,18 +7,24 @@ import java.sql.*;
 import java.util.UUID;
 import java.util.logging.Logger;
 
+import streammessenger.db.ConnectionPool;
+import streammessenger.db.DatabaseManager;
+import streammessenger.push.PushNotificationService;
+import streammessenger.session.Session;
+import streammessenger.session.SessionRegistry;
+
 /**
  * Handles call signaling for Twilio-based video calls.
- *
+ * <p>
  * Namespace: urn:xmpp:call:0
- *
+ * <p>
  * Operations:
  *   invite   → Initiate a call (caller → callee)
  *   accept   → Callee accepts
  *   decline  → Callee declines
  *   end      → Either party hangs up
  *   busy     → Callee is in another call
- *
+ * <p>
  * The XMPP server does NOT handle WebRTC SDP/ICE.
  * Twilio handles all media negotiation internally.
  * We just route call control messages.
@@ -67,6 +69,7 @@ public final class CallHandler implements StanzaHandler {
             case "decline" -> handleDecline(req, iqId, session);
             case "end"     -> handleEnd(req, iqId, session);
             case "busy"    -> handleBusy(req, iqId, session);
+            default -> sendError(session, iqId, "feature-not-implemented");
         }
     }
 
@@ -130,14 +133,14 @@ public final class CallHandler implements StanzaHandler {
                 .orElse(false);
 
         // 4. ALWAYS send push notification (calls must wake up the device)
-        String callerName = db.getDisplayName(callerId);
+        /*TODO:String callerName = db.getDisplayName(callerId);
         pushService.sendCallNotification(
                 calleeId,
                 callerName,
                 req.callType(),
                 callId,
-                roomName
-        );
+                roomName,
+        );*/
 
         logger.info("Call invited: " + callId
                 + " from=" + callerId + " to=" + calleeId

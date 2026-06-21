@@ -197,6 +197,7 @@ CREATE TABLE message_edits (
 CREATE INDEX idx_edits_message ON message_edits(message_id);
 
 -- Scheduled messages
+--- POSTGRESQL
 CREATE TABLE scheduled_messages (
     id                  BIGSERIAL PRIMARY KEY,
     message_id          UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
@@ -212,6 +213,26 @@ CREATE TABLE scheduled_messages (
     cancelled_at        TIMESTAMPTZ,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+--- MySQL
+CREATE TABLE scheduled_messages (
+       id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
+       message_id          CHAR(36) NOT NULL UNIQUE DEFAULT (UUID()),
+       from_user_id        VARCHAR(32) NOT NULL,
+       to_jid              VARCHAR(255) NOT NULL,
+       message_type        VARCHAR(20) NOT NULL DEFAULT 'text',
+       encrypted_content   TEXT NOT NULL,
+       iv                  VARCHAR(32) NOT NULL,
+       media_storage_key   VARCHAR(500),
+       mime_type           VARCHAR(100),
+       scheduled_for       TIMESTAMP NOT NULL,
+       sent_at             TIMESTAMP NULL,
+       cancelled_at        TIMESTAMP NULL,
+       created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+       CONSTRAINT fk_user
+           FOREIGN KEY (from_user_id) REFERENCES users(user_id)
+   );
 
 CREATE INDEX idx_scheduled_pending ON scheduled_messages(scheduled_for)
     WHERE sent_at IS NULL AND cancelled_at IS NULL;
@@ -731,3 +752,17 @@ CREATE TABLE device_one_time_keys (
 
 CREATE INDEX idx_device_otk_unclaimed ON device_one_time_keys(device_id)
     WHERE claimed_at IS NULL;
+
+
+CREATE TABLE pending_receipts (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    from_uid VARCHAR(255) NOT NULL,
+    to_uid VARCHAR(32) NOT NULL,
+    message_id VARCHAR(255) NOT NULL,
+    receipt_type ENUM('received', 'displayed', 'server_received') NOT NULL, -- received|displayed|server_received
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMPT NOT NULL DEFAULT NOW() + INTERVAL '24 hours'
+    FOREIGN KEY (to_uid) REFERENCES users(user_id)
+);
+
+CREATE INDEX idx_pending_receipts_user ON pending_receipts(to_uid);

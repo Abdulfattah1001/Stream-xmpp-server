@@ -158,7 +158,7 @@ public final class AuthManager {
 
         logger.info("Authenticated: userId=" + userId
                 + " jid=" + user.jid()
-                + " uid=" + session.getUid()
+                + " uid=" + session.getSessionId()
                 + " ip=" + clientIp);
 
         Thread.ofVirtual()

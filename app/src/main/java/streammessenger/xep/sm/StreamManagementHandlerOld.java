@@ -112,7 +112,7 @@ public final class StreamManagementHandlerOld {
                 SM_NS, smId, resumable
         ));
 
-        logger.info("SM enabled uid=" + session.getUid()
+        logger.info("SM enabled uid=" + session.getSessionId()
                 + " smId=" + smId + " resumable=" + resumable);
     }
 
@@ -143,7 +143,7 @@ public final class StreamManagementHandlerOld {
 
         Attribute hAttr = element.getAttributeByName(new QName("h"));
         if (hAttr == null) {
-            logger.warning("SM <a> missing h attribute from uid=" + session.getUid());
+            logger.warning("SM <a> missing h attribute from uid=" + session.getSessionId());
             return;
         }
 
@@ -151,7 +151,7 @@ public final class StreamManagementHandlerOld {
             long h = Long.parseLong(hAttr.getValue());
             session.processAck(h);
         } catch (NumberFormatException e) {
-            logger.warning("SM <a> invalid h value from uid=" + session.getUid()
+            logger.warning("SM <a> invalid h value from uid=" + session.getSessionId()
                     + ": " + hAttr.getValue());
         }
     }

@@ -1,18 +1,18 @@
 package streammessenger.group.service;
 
-import com.xmpp.group.model.*;
-import com.xmpp.group.repository.GroupRepository;
+import streammessenger.group.model.*;
+import streammessenger.group.repository.GroupRepository;
 
 import java.util.logging.Logger;
 
 /**
  * Coordinates between repository (persistence) and notifier (events).
- *
+ * <p>
  * Every state-changing operation:
  *   1. Validates authorization
  *   2. Persists the change (which increments state_version)
  *   3. Notifies online members of the change
- *
+ * <p>
  * Authorization checks are explicit and consistent.
  */
 public final class GroupService {
@@ -66,6 +66,7 @@ public final class GroupService {
                     "Not a member of this group");
         }
 
+        // TODO: This has to be validated also on the client side
         GroupSettings settings = repository.getSettings(groupId);
         if (settings.onlyAdminsCanAdd() && !actor.canModerate()) {
             throw new GroupException(GroupException.Code.NOT_AUTHORIZED,
@@ -97,6 +98,99 @@ public final class GroupService {
 
         logger.info("Member added: groupId=" + groupId
                 + " user=" + newUserId + " by=" + actorUserId);
+    }
+
+    // =========================================================================
+    // Join via invite link
+    // =========================================================================
+
+    /**
+     * Joins a group via shareable invite link.
+     * <p>
+     * No admin involvement - this is the user choosing to join themselves
+     * by clicking a link someone shared with them.
+     * <p>
+     * Steps:
+     *   1. Validate link, check capacity, add member (atomic in repo)
+     *   2. Notify all existing members
+     *   3. Send full snapshot to new joiner
+     *
+     * @return The group_id they joined
+     * @throws GroupException if link invalid, group full, or already member
+     */
+    public String joinViaLink(String linkToken, String newUserId,
+                              String newUserJid) {
+
+        GroupRepository.LinkJoinResult result =
+                repository.joinViaLink(linkToken, newUserId, newUserJid);
+
+        if (result == null) {
+            throw new GroupException(GroupException.Code.NOT_FOUND,
+                    "Invalid or revoked invite link");
+        }
+
+        switch (result.status()) {
+            case ALREADY_MEMBER ->
+                    throw new GroupException(GroupException.Code.ALREADY_MEMBER,
+                            "You are already a member of this group");
+
+            case GROUP_FULL ->
+                    throw new GroupException(GroupException.Code.GROUP_FULL,
+                            "This group is at maximum capacity");
+
+            case INVALID_LINK ->
+                    throw new GroupException(GroupException.Code.NOT_FOUND,
+                            "Invalid invite link");
+
+            case SUCCESS -> {
+                // Get the new member's full record (with display_name from users table)
+                GroupMember newMember = repository.getMember(
+                        result.groupId(), newUserId);
+
+                if (newMember != null) {
+                    notifier.notifyMemberJoinedViaLink(
+                            result.groupId(),
+                            result.newVersion(),
+                            newMember,
+                            linkToken
+                    );
+                }
+
+                return result.groupId();
+            }
+        }
+
+        // Unreachable
+        throw new GroupException(GroupException.Code.INTERNAL,
+                "Unknown link join status");
+    }
+
+    /**
+     * Creates a new invite link for a group.
+     * Only admins can create links.
+     */
+    public GroupRepository.InviteLink createInviteLink(String groupId, String actorUserId) {
+        GroupMember actor = repository.getMember(groupId, actorUserId);
+        if (actor == null || !actor.canModerate()) {
+            throw new GroupException(GroupException.Code.NOT_AUTHORIZED,
+                    "Only admins can create invite links");
+        }
+
+        return repository.createInviteLink(groupId, actorUserId);
+    }
+
+    /**
+     * Revokes an existing invite link.
+     */
+    public void revokeInviteLink(String groupId, String actorUserId,
+                                 String linkToken) {
+        GroupMember actor = repository.getMember(groupId, actorUserId);
+        if (actor == null || !actor.canModerate()) {
+            throw new GroupException(GroupException.Code.NOT_AUTHORIZED,
+                    "Only admins can revoke invite links");
+        }
+
+        repository.revokeInviteLink(linkToken, actorUserId);
     }
 
     // =========================================================================

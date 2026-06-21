@@ -68,7 +68,7 @@ public final class CarbonHandler implements StanzaHandler {
                     "<iq type='result' id='%s'/>",
                     escapeXml(iqId)
                 ));
-                logger.info("Carbons enabled: uid=" + session.getUid());
+                logger.info("Carbons enabled: uid=" + session.getSessionId());
             }
 
             case "disable" -> {
@@ -77,7 +77,7 @@ public final class CarbonHandler implements StanzaHandler {
                     "<iq type='result' id='%s'/>",
                     escapeXml(iqId)
                 ));
-                logger.info("Carbons disabled: uid=" + session.getUid());
+                logger.info("Carbons disabled: uid=" + session.getSessionId());
             }
 
             // ─── Device list request ──────────────────────────────────────

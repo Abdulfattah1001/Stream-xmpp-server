@@ -1,8 +1,12 @@
 package streammessenger.group.repository;
 
-import com.xmpp.db.ConnectionPool;
-import com.xmpp.group.model.*;
+import com.github.f4b6a3.ulid.UlidCreator;
 
+import streammessenger.db.ConnectionPool;
+import streammessenger.group.model.*;
+import streammessenger.muc.model.GroupEventType;
+
+import java.security.SecureRandom;
 import java.sql.*;
 import java.time.Instant;
 import java.util.*;
@@ -10,7 +14,7 @@ import java.util.logging.Logger;
 
 /**
  * Persistence layer for groups.
- *
+ * <p>
  * Key design decisions:
  *  - Every state-changing operation increments groups.state_version
  *  - Every state-changing operation inserts a row into group_state_events
@@ -18,6 +22,7 @@ import java.util.logging.Logger;
  *  - Clients use state_version for incremental sync
  */
 public final class GroupRepository {
+    private final SecureRandom secureRandom = new SecureRandom();
 
     private static final Logger logger =
             Logger.getLogger(GroupRepository.class.getName());
@@ -34,22 +39,35 @@ public final class GroupRepository {
     // Create
     // =========================================================================
 
+    private String generateGroupIdCompat(){
+        byte[] bytes = new byte[4];
+        secureRandom.nextBytes(bytes);
+
+        StringBuilder sb = new StringBuilder("gr_");
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+
+        // e.g. "gr_7f3a9b2c"
+
+        return sb.toString();
+    }
     /**
      * Creates a new group.
-     *
+     * <p>
      * Transaction:
      *   1. INSERT group (state_version = 1)
      *   2. INSERT default settings
      *   3. INSERT creator as member with is_owner = true
      *   4. INSERT group_created event at version 1
-     *
+     * <p>
      * Returns the created group.
      */
     public Group create(String name, String description,
                          String creatorUserId, String creatorJid,
                          GroupVisibility visibility, int maxMembers) {
 
-        String groupId = UUID.randomUUID().toString();
+        String groupId = generateGroupIdCompat();
         String jid     = groupId + "@" + groupDomain;
 
         Connection conn = null;
@@ -107,6 +125,7 @@ public final class GroupRepository {
                 "{\"name\":\"%s\",\"creator\":\"%s\",\"visibility\":\"%s\"}",
                 escapeJson(name), creatorUserId, visibility.xmlValue()
             );
+
             insertEvent(conn, groupId, 1, "group_created",
                     creatorUserId, null, payloadJson);
 
@@ -130,6 +149,281 @@ public final class GroupRepository {
         }
     }
 
+
+    /**
+     * Stores an encrypted offline message.
+     * <p>
+     * The server stores CIPHERTEXT only.
+     * It never sees the plaintext content.
+     *
+     * @param fromJid          Sender's full JID
+     * @param toJid            Recipient's bare JID
+     * @param messageId        Client-generated UUID for this message
+     * @param messageType      text | image | video | audio | file | location
+     * @param encryptedContent Base64 AES-256-GCM ciphertext
+     * @param iv               Base64 12-byte IV
+     * @param mediaStorageKey  Object storage path (null for text messages)
+     * @param mimeType         MIME type hint (null for text messages)
+     * @param fileSizeBytes    File size in bytes (0 for text messages)
+     * @param replyToId        UUID of message being replied to (null if none)
+     */
+    @Deprecated
+    private boolean storeEncryptedMessageEventModelOld(String fromJid,
+                                                   String toJid,
+                                                   String messageId,
+                                                   String messageType,
+                                                   String encryptedContent,
+                                                   String iv,
+                                                   String mediaStorageKey,
+                                                   String encryptedMetadata,
+                                                   String mimeType,
+                                                   long fileSizeBytes,
+                                                   String replyToId) {
+        String eventId = UlidCreator.getMonotonicUlid().toString().toUpperCase();
+        String sql = """
+                INSERT INTO events (
+                    event_id,
+                    event_category,
+                    event_type,
+                    group_id,
+                    sender_id,
+                    recipient_id,
+                    sender_jid,
+                    group_version,
+                    epoch,
+                    iv,
+                    encrypted_content,
+                    encrypted_metadata,
+                    reply_to_event_id,
+                    media_storage_key,
+                    mime_type,
+                    file_size_bytes,
+                    created_at,
+                    expires_at
+                )
+                SELECT
+                    ?,
+                    f.user_id,
+                    t.user_id,
+                    ?, ?, ?, ?, ?, ?, ?, ?,
+                    'pending',
+                    true,
+                    NOW(),
+                    NOW() + INTERVAL 30 DAY
+                FROM users f
+                JOIN users t
+                WHERE f.user_id = ?
+                  AND t.user_id = ?
+                """;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, messageId);
+            stmt.setString(2, messageType);
+            stmt.setString(3, encryptedContent);
+            stmt.setString(4, iv);
+            stmt.setString(5, mediaStorageKey);
+            stmt.setString(6, encryptedMetadata);
+            stmt.setString(7, mimeType);
+            stmt.setLong(8, fileSizeBytes);
+            stmt.setString(9, replyToId);
+            stmt.setString(10, fromJid);
+            stmt.setString(11, toJid);
+
+            int rows = stmt.executeUpdate();
+            conn.commit();
+            return rows > 0;
+
+        } catch (SQLException e) {
+            logger.severe("storeEncryptedMessage error: " + e.getMessage());
+            return false;
+        }
+    }
+
+
+    public boolean storeEncryptedMessageEventModel(String fromJid,
+                                                   String toJid,
+                                                   String messageId,
+                                                   String messageType,
+                                                   String encryptedContent,
+                                                   String replyToId,
+                                                   int groupVersion,
+                                                   int epoch) {
+
+        // 1. Generate the monotonic sortable ID anchor
+        String eventId = UlidCreator.getMonotonicUlid().toString().toUpperCase();
+
+        // 2. Exactly matching column count (17 structural items)
+        String sql = """
+            INSERT INTO events (
+                event_id,
+                event_category,
+                event_type,
+                group_id,
+                sender_id,
+                sender_jid,
+                group_version,
+                epoch,
+                encrypted_content,
+                reply_to_event_id,
+                created_at,
+                expires_at,
+                event_ref_id
+            ) VALUES (?, 'groupchat', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP(6), NOW() + INTERVAL 30 DAY, ?)
+            """;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            // Explicit structural mapping to prevent index confusion
+            stmt.setString(1, eventId);                 // Primary Key
+            stmt.setString(2, messageType);             // e.g., 'text', 'image'
+            stmt.setString(3, toJid);                   // group_id (the target destination)
+            stmt.setString(4, fromJid);                 // sender_id
+            stmt.setString(5, fromJid + "@server");     // sender_jid layout
+            stmt.setInt(6, groupVersion);               // Crucial state guardrail
+            stmt.setInt(7, epoch);                      // E2EE cryptographic tracking boundaries
+            stmt.setString(9, encryptedContent);        // Ciphertext payload
+            stmt.setString(11, replyToId);              // Parent event identifier reference
+
+
+            stmt.setString(12, messageId); // For deletion e.t.c
+
+            int rows = stmt.executeUpdate();
+
+            // Only call commit manually if your pool connection defaults to autoCommit = false
+            if (!conn.getAutoCommit()) {
+                conn.commit();
+            }
+
+            return rows > 0;
+
+        } catch (SQLException e) {
+            logger.severe("storeEncryptedMessageEventModel failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Fetches a single, perfectly sorted timeline delta for a user across all
+     * 1-to-1 chats and authorized group membership windows.
+     * * @param userId The ID of the connecting user (e.g., 'alice_id')
+     * @param clientLastSeenUlid The highest ULID string the client has stored locally
+     * @param limit The maximum number of timeline events to return in a single page
+     */
+    public List<UnifiedTimelineItem> getUnifiedTimelineDelta(String userId, String clientLastSeenUlid, int limit) {
+        List<UnifiedTimelineItem> timeline = new ArrayList<>();
+
+        String sql = """
+            SELECT
+                e.event_id,
+                e.event_ref_id,
+                e.event_category,
+                e.event_type,
+                e.group_id,
+                e.sender_id,
+                e.sender_jid,
+                e.group_version,
+                e.epoch,
+                e.iv,
+                e.encrypted_content,
+                e.encrypted_metadata,
+                e.reply_to_event_id,
+                e.media_storage_key,
+                e.mime_type,
+                e.file_size_bytes,
+                e.created_at
+            FROM events e
+            LEFT JOIN group_member m
+              ON e.group_id = m.group_id AND m.user_id = ?
+            WHERE
+                -- Branch A: Direct private messages intended for this specific client
+                (e.event_category = 'chat' AND e.recipient_id = ? AND e.event_id > ?)
+                OR
+                -- Branch B: Group messages and events bound by historical residency windows
+                (e.event_category IN ('groupchat', 'system')
+                 AND m.user_id IS NOT NULL
+                 AND e.event_id > ?
+                 AND e.sender_id != ?
+                 AND e.event_id >= m.joined_at_id
+                 AND (m.left_at_id IS NULL OR e.event_id <= m.left_at_id))
+            ORDER BY e.event_id ASC
+            LIMIT ?;
+            """;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            // Map the parameters cleanly to match the query indexes
+            stmt.setString(1, userId);             // For the LEFT JOIN evaluation
+            stmt.setString(2, userId);             // Branch A: recipient_id
+            stmt.setString(3, clientLastSeenUlid); // Branch A: anchor
+            stmt.setString(4, clientLastSeenUlid); // Branch B: anchor
+            stmt.setString(5, userId); // Exclude the message that the current session sent
+            stmt.setInt(6, limit);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    timeline.add(mapRowToTimelineItem(rs));
+                }
+            }
+        } catch (SQLException e) {
+            logger.severe("Failed to pull unified timeline delta for user " + userId + ": " + e.getMessage());
+        }
+
+        return timeline;
+    }
+
+    private UnifiedTimelineItem mapRowToTimelineItem(ResultSet rs) throws SQLException {
+        return new UnifiedTimelineItem(
+                rs.getString("event_id"),
+                rs.getString("event_ref_id"),
+                rs.getString("event_category"),
+                rs.getString("event_type"),
+                rs.getString("group_id"),
+                rs.getString("sender_id"),
+                rs.getString("sender_jid"),
+                rs.getInt("group_version"),
+                rs.getInt("epoch"),
+                rs.getString("encrypted_content"),
+                rs.getString("reply_to_event_id"),
+                rs.getTimestamp("created_at")
+        );
+    }
+
+    /**
+     * Represents a perfectly ordered, polymorphic timeline element
+     * pulled from the unified 'events' table.
+     */
+    public record UnifiedTimelineItem(
+            String id,                  // The sortable ULID string
+            String eventRefId,          // The UUID for the content
+            String eventCategory,       // 'chat', 'groupchat', 'system'
+            String eventType,           // 'text', 'image', 'member_left', etc.
+            String groupId,             // Null for 1-to-1 chats
+            String senderId,            // The raw user ID of the sender/actor
+            String senderJid,           // Full XMPP address identifier
+            int groupVersion,           // Config sequence state version
+            int epoch,                  // Cryptographic ratchet fence boundary
+            String encryptedContent,    // Ciphertext payload or event JSON data
+            String replyToEventId,      // Self-referencing structural link
+            Timestamp createdAt         // Precise database capture stamp
+    ) {
+
+        // Quick helper tools to make your streaming routing conditions highly readable
+        public boolean isDirectMessage() {
+            return "chat".equals(eventCategory);
+        }
+
+        public boolean isGroupMessage() {
+            return "groupchat".equals(eventCategory);
+        }
+
+        public boolean isGroupEvent() {
+            return "system".equals(eventCategory);
+        }
+    }
     // =========================================================================
     // Read
     // =========================================================================
@@ -183,7 +477,7 @@ public final class GroupRepository {
 
     public GroupMember getMember(String groupId, String userId) {
         String sql = """
-            SELECT gm.user_id, gm.user_jid, u.display_name,
+            SELECT gm.user_id, gm.user_jid, u.phone_number, u.avatar_url, u.display_status, u.display_name,
                    gm.is_admin, gm.is_owner, gm.muted_until,
                    gm.joined_at, gm.added_by_user_id
             FROM group_members gm
@@ -205,7 +499,7 @@ public final class GroupRepository {
 
     public List<GroupMember> listMembers(String groupId) {
         String sql = """
-            SELECT gm.user_id, gm.user_jid, u.display_name,
+            SELECT gm.user_id, gm.user_jid, u.phone_number, u.avatar_url, u.display_status, u.display_name,
                    gm.is_admin, gm.is_owner, gm.muted_until,
                    gm.joined_at, gm.added_by_user_id
             FROM group_members gm
@@ -305,12 +599,12 @@ public final class GroupRepository {
 
     /**
      * Adds a member to the group.
-     *
+     * <p>
      * Transaction:
      *   1. INSERT member (handles re-adding via ON DUPLICATE)
      *   2. UPDATE groups.member_count and increment state_version
      *   3. INSERT member_added event
-     *
+     * <p>
      * Returns the new state_version.
      */
     public long addMember(String groupId, String newUserId, String newUserJid,
@@ -370,6 +664,327 @@ public final class GroupRepository {
             close(conn);
         }
     }
+
+    // =========================================================================
+    // Join via invite link (no actor - self-initiated)
+    // =========================================================================
+
+    /**
+     * Adds a member via invite link (no admin involved).
+     * <p>
+     * Different from addMember() because:
+     *   - actor_user_id is NULL (no one added them)
+     *   - added_by_user_id is NULL
+     *   - Event type is "member_joined_via_link"
+     *   - link_token is tracked in payload for audit
+     * <p>
+     * Transaction:
+     *   1. Atomically check link is valid + claim it
+     *   2. INSERT member
+     *   3. UPDATE counters + state_version
+     *   4. INSERT member_joined_via_link event
+     */
+    public LinkJoinResult joinViaLink(String linkToken,
+                                      String newUserId,
+                                      String newUserJid) {
+        Connection conn = null;
+        try {
+            conn = pool.getConnection();
+            conn.setAutoCommit(false);
+
+            // 1. Atomically validate link AND increment usage
+            String groupId = null;
+            String createdByUserId = null;
+
+            String validateSql = """
+                UPDATE group_invite_links
+                SET use_count = use_count + 1
+                WHERE link_token = ?
+                  AND revoked = FALSE
+                """;
+            int updated;
+            try (PreparedStatement stmt = conn.prepareStatement(validateSql)) {
+                stmt.setString(1, linkToken);
+                updated = stmt.executeUpdate();
+            }
+
+            if (updated == 0) {
+                conn.rollback();
+                return null; // Link doesn't exist or was revoked
+            }
+
+            // Read the group_id and creator
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "SELECT group_id, created_by_user_id " +
+                            "FROM group_invite_links WHERE link_token = ?")) {
+                stmt.setString(1, linkToken);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        groupId = rs.getString("group_id");
+                        createdByUserId = rs.getString("created_by_user_id");
+                    }
+                }
+            }
+
+            if (groupId == null) {
+                conn.rollback();
+                return null;
+            }
+
+            // 2. Check user is not already a member or banned
+            String checkSql = """
+                SELECT 1 FROM group_members
+                WHERE group_id = ? AND user_id = ? AND left_at IS NULL
+                """;
+            try (PreparedStatement stmt = conn.prepareStatement(checkSql)) {
+                stmt.setString(1, groupId);
+                stmt.setString(2, newUserId);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        conn.rollback();
+                        return LinkJoinResult.alreadyMember(groupId);
+                    }
+                }
+            }
+
+            // 3. Check group capacity
+            int memberCount = 0, maxMembers = 0;
+            boolean isDeleted = false;
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "SELECT member_count, max_members, deleted_at " +
+                            "FROM `groups` WHERE group_id = ?")) {
+                stmt.setString(1, groupId);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        memberCount = rs.getInt("member_count");
+                        maxMembers = rs.getInt("max_members");
+                        isDeleted = rs.getTimestamp("deleted_at") != null;
+                    }
+                }
+            }
+
+            if (isDeleted) {
+                conn.rollback();
+                return null;
+            }
+            if (memberCount >= maxMembers) {
+                conn.rollback();
+                return LinkJoinResult.groupFull(groupId);
+            }
+
+            // 4. Add member (reactivate if previously left)
+            String memberSql = """
+                INSERT INTO group_members (
+                    group_id, user_id, user_jid,
+                    is_admin, is_owner, added_by_user_id, joined_at
+                ) VALUES (?, ?, ?, FALSE, FALSE, NULL, CURRENT_TIMESTAMP(6))
+                ON DUPLICATE KEY UPDATE
+                    is_admin           = FALSE,
+                    added_by_user_id   = NULL,
+                    joined_at          = CURRENT_TIMESTAMP(6),
+                    left_at            = NULL,
+                    removed_by_user_id = NULL
+                """;
+            int rows;
+            try (PreparedStatement stmt = conn.prepareStatement(memberSql)) {
+                stmt.setString(1, groupId);
+                stmt.setString(2, newUserId);
+                stmt.setString(3, newUserJid);
+                rows = stmt.executeUpdate();
+            }
+
+            boolean isFirstTime = (rows == 1);
+
+            // 5. Increment counters and version
+            long newVersion = incrementVersion(conn, groupId);
+            if (isFirstTime) {
+                bumpMemberCount(conn, groupId, 1);
+            }
+
+            // 6. Event - note actor_user_id is NULL because no one added them
+            //         target_user_id is the new user themselves
+            String payload = String.format(
+                    "{\"user_id\":\"%s\",\"user_jid\":\"%s\"," +
+                            "\"link_token\":\"%s\",\"link_created_by\":\"%s\"}",
+                    newUserId,
+                    escapeJson(newUserJid),
+                    escapeJson(linkToken),
+                    createdByUserId
+            );
+            insertEvent(conn, groupId, newVersion,
+                    GroupEventType.MEMBER_JOINED_VIA_LINK.name(),
+                    null,  // actor is null - they joined themselves
+                    newUserId,
+                    payload);
+
+            conn.commit();
+
+            logger.info("Member joined via link: groupId=" + groupId
+                    + " user=" + newUserId + " token=" + linkToken);
+
+            return LinkJoinResult.success(groupId, newVersion);
+
+        } catch (SQLException e) {
+            rollback(conn);
+            logger.severe("joinViaLink error: " + e.getMessage());
+            throw new RuntimeException("Failed to join via link", e);
+        } finally {
+            close(conn);
+        }
+    }
+
+    /**
+     * Result of a link join attempt.
+     * Distinguishes between success, already-member, group-full, invalid-link.
+     */
+    public record LinkJoinResult(
+            Status status,
+            String groupId,
+            long newVersion
+    ) {
+        public enum Status {
+            SUCCESS,
+            ALREADY_MEMBER,
+            GROUP_FULL,
+            INVALID_LINK
+        }
+
+        public static LinkJoinResult success(String groupId, long version) {
+            return new LinkJoinResult(Status.SUCCESS, groupId, version);
+        }
+
+        public static LinkJoinResult alreadyMember(String groupId) {
+            return new LinkJoinResult(Status.ALREADY_MEMBER, groupId, 0);
+        }
+
+        public static LinkJoinResult groupFull(String groupId) {
+            return new LinkJoinResult(Status.GROUP_FULL, groupId, 0);
+        }
+
+        public boolean isSuccess() { return status == Status.SUCCESS; }
+    }
+
+
+    // =========================================================================
+    // Invite links
+    // =========================================================================
+
+    public InviteLink createInviteLink(String groupId, String creatorUserId) {
+        String token = generateLinkToken();
+        String sql = """
+            INSERT INTO group_invite_links (
+                link_token, group_id, created_by_user_id
+            ) VALUES (?, ?, ?)
+            """;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, token);
+            stmt.setString(2, groupId);
+            stmt.setString(3, creatorUserId);
+            stmt.executeUpdate();
+            conn.commit();
+
+            return new InviteLink(token, groupId, creatorUserId,
+                    java.time.Instant.now(), false);
+
+        } catch (SQLException e) {
+            logger.severe("createInviteLink error: " + e.getMessage());
+            throw new RuntimeException("Failed to create link", e);
+        }
+    }
+
+    public void revokeInviteLink(String linkToken, String actorUserId) {
+        String sql = """
+            UPDATE group_invite_links
+            SET revoked = TRUE,
+                revoked_at = CURRENT_TIMESTAMP(6),
+                revoked_by_user_id = ?
+            WHERE link_token = ? AND revoked = FALSE
+            """;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, actorUserId);
+            stmt.setString(2, linkToken);
+            stmt.executeUpdate();
+            conn.commit();
+        } catch (SQLException e) {
+            logger.severe("revokeInviteLink error: " + e.getMessage());
+        }
+    }
+
+    public List<InviteLink> listInviteLinks(String groupId) {
+        String sql = """
+            SELECT link_token, group_id, created_by_user_id,
+                   use_count, revoked, created_at
+            FROM group_invite_links
+            WHERE group_id = ? AND revoked = FALSE
+            ORDER BY created_at DESC
+            """;
+        List<InviteLink> links = new ArrayList<>();
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, groupId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    links.add(new InviteLink(
+                            rs.getString("link_token"),
+                            rs.getString("group_id"),
+                            rs.getString("created_by_user_id"),
+                            rs.getTimestamp("created_at").toInstant(),
+                            rs.getBoolean("revoked")
+                    ));
+                }
+            }
+        } catch (SQLException e) {
+            logger.severe("listInviteLinks error: " + e.getMessage());
+        }
+        return links;
+    }
+
+    public Optional<InviteLink> getInviteLink(String inviteLink){
+        String sql = """
+            SELECT link_token, group_id, created_by_user_id,
+                   use_count, revoked, created_at
+            FROM group_invite_links
+            WHERE link_token = ?
+            """;
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, inviteLink);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return Optional.of(new InviteLink(
+                            rs.getString("link_token"),
+                            rs.getString("group_id"),
+                            rs.getString("created_by_user_id"),
+                            rs.getTimestamp("created_at").toInstant(),
+                            rs.getBoolean("revoked")
+                    ));
+                }
+            }
+        } catch (SQLException e) {
+            logger.severe("listInviteLinks error: " + e.getMessage());
+        }
+        return Optional.empty();
+    }
+
+    private String generateLinkToken() {
+        byte[] bytes = new byte[16];
+        new java.security.SecureRandom().nextBytes(bytes);
+        return java.util.Base64.getUrlEncoder()
+                .withoutPadding().encodeToString(bytes);
+    }
+
+    public record InviteLink(
+            String token,
+            String groupId,
+            String createdByUserId,
+            java.time.Instant createdAt,
+            boolean revoke
+    ) {}
 
     public long removeMember(String groupId, String targetUserId,
                               String actorUserId, boolean voluntary) {
@@ -660,11 +1275,11 @@ public final class GroupRepository {
 
     /**
      * Returns all events for a group since a given version.
-     *
+     * <p>
      * Used during delta sync:
      *   Client sends: "I have group X at version 5"
      *   Server returns: all events from version 6 onwards
-     *
+     * <p>
      * Client applies events in order to update its local state.
      */
     public List<GroupStateEvent> getEventsSinceVersion(String groupId,
@@ -809,11 +1424,15 @@ public final class GroupRepository {
         );
     }
 
+    @SuppressWarnings("NewApi")
     private GroupMember mapMember(ResultSet rs) throws SQLException {
         Timestamp muted = rs.getTimestamp("muted_until");
         return new GroupMember(
                 rs.getString("user_id"),
                 rs.getString("user_jid"),
+                rs.getString("phone_number"),
+                rs.getString("avatar_url"),
+                rs.getString("display_status"),
                 rs.getString("display_name"),
                 rs.getBoolean("is_owner"),
                 rs.getBoolean("is_admin"),

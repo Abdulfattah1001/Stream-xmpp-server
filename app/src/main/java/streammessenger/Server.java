@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 
 import streammessenger.api.AuthController;
@@ -27,7 +28,18 @@ import streammessenger.db.DatabaseManager;
 import streammessenger.features.CollaborativeNoteHandler;
 import streammessenger.features.TranslationService;
 import streammessenger.group.GroupManager;
+import streammessenger.group.handler.GroupStanzaHandler;
+import streammessenger.group.repository.GroupRepository;
+import streammessenger.group.service.GroupEventNotifier;
+import streammessenger.group.service.GroupMessageRouter;
+import streammessenger.group.service.GroupSyncService;
 import streammessenger.metrics.ServerMetrics;
+import streammessenger.muc.service.FanoutService;
+import streammessenger.muc.service.GroupRegistry;
+import streammessenger.muc.service.GroupService;
+import streammessenger.muc.service.InvitationService;
+import streammessenger.muc.service.MembershipService;
+import streammessenger.muc.service.PresenceBroadcaster;
 import streammessenger.mutlidevice.CarbonManager;
 import streammessenger.mutlidevice.DeviceManager;
 import streammessenger.mutlidevice.MultiDeviceMessageHandler;
@@ -37,6 +49,7 @@ import streammessenger.security.RateLimiter;
 import streammessenger.session.Session;
 import streammessenger.session.SessionReaper;
 import streammessenger.session.SessionRegistry;
+import streammessenger.signal.SenderKeyManager;
 import streammessenger.stanza.CarbonHandler;
 import streammessenger.stanza.MessageHandler;
 import streammessenger.stanza.ReactionHandler;
@@ -49,12 +62,12 @@ import streammessenger.vhost.VirtualHostManager;
 
 /**
  * XMPP Server - root component.
- *
+ * <p>
  * Owns and wires all top-level components.
  * Manages connection accept loop and server lifecycle.
- *
+ * <p>
  * Component graph:
- *
+ * <p>
  *   Server
  *   ├── ServerConfig          (immutable config + SSLContext)
  *   ├── ConnectionPool        (DB connections)
@@ -68,10 +81,10 @@ import streammessenger.vhost.VirtualHostManager;
  *   ├── SessionReaper         (idle session cleanup)
  *   └── ServerMetrics         (counters + gauges)
  */
-public class ServerOld {
+public class Server {
 
     private static final Logger logger =
-            Logger.getLogger(ServerOld.class.getName());
+            Logger.getLogger(Server.class.getName());
 
     private static final SecureRandom secureRandom = new SecureRandom();
 
@@ -130,6 +143,17 @@ public class ServerOld {
     private final DeviceManager deviceManager;
     private final MultiDeviceMessageHandler multiDeviceHandler;
 
+    //MUC
+    private final GroupRepository groupRepository;
+    //private final GroupRegistry groupRegistry;
+    //private final GroupService groupService;
+    //private final MembershipService membershipService;
+    //private final InvitationService invitationService;
+    private final FanoutService fanoutService;
+    private final PresenceBroadcaster presenceBroadcaster;
+    private final GroupStanzaHandler groupStanzaHandler;
+    //private final SenderKeyManager senderKeyManager;
+
 
     // -------------------------------------------------------------------------
     // Runtime state
@@ -145,18 +169,31 @@ public class ServerOld {
                 t.setDaemon(true);
                 return t;
             });
+    private final ScheduledExecutorService globalAckScheduler = Executors.newScheduledThreadPool(
+            4,
+            new ThreadFactory() {
+                private final AtomicInteger threadNumber = new AtomicInteger(1);
+
+                @Override
+                public Thread newThread(Runnable r) {
+                    Thread t = new Thread(r, "xmpp-sm-ack-worker-" + threadNumber.getAndIncrement());
+                    t.setDaemon(true); // Allows JVM to exit cleanly
+                    return t;
+                }
+            }
+    );
 
     // -------------------------------------------------------------------------
     // Singleton
     // -------------------------------------------------------------------------
 
-    private static volatile ServerOld instance = null;
+    private static volatile Server instance = null;
 
     // =========================================================================
     // Constructor - private, use Builder
     // =========================================================================
 
-    private ServerOld(Builder builder) throws IOException {
+    private Server(Builder builder) throws IOException {
         this.PORT    = builder.port;
         this.address = builder.address;
         this.config  = builder.config;
@@ -180,6 +217,31 @@ public class ServerOld {
         this.multiDeviceHandler = new MultiDeviceMessageHandler(registry, db);
 
         this.firebaseTokenVerifier =  new FirebaseTokenVerifier(config.getFcmProjectId());
+
+        this.groupRepository      = new GroupRepository(connectionPool,
+                "conference." + config.getDomainName());
+        this.fanoutService        = new FanoutService(registry, db);
+        this.presenceBroadcaster  = new PresenceBroadcaster(registry, db);
+        /*this.groupRegistry        = new GroupRegistry(groupRepository);
+        this.groupService         = new GroupService(groupRepository,
+                groupRegistry, presenceBroadcaster, fanoutService);
+        this.senderKeyManager =  new SenderKeyManager(connectionPool, registry, groupRegistry);
+        this.membershipService    = new MembershipService(groupRepository,
+                groupRegistry, fanoutService, presenceBroadcaster, this.senderKeyManager);
+        this.invitationService    = new InvitationService(connectionPool,
+                groupRepository, groupRegistry, membershipService, registry,
+                "https://" + config.getDomainName() + "/g");
+        this.groupStanzaHandler   = new GroupStanzaHandler(groupRepository,
+                groupRegistry, groupService, membershipService, invitationService,
+                fanoutService, presenceBroadcaster,
+                db,
+                "conference." + config.getDomainName());*/
+        GroupEventNotifier notifier = new GroupEventNotifier(groupRepository, registry);
+        this.groupStanzaHandler = new GroupStanzaHandler(groupRepository,
+                new streammessenger.group.service.GroupService(groupRepository, notifier),
+                new GroupMessageRouter(groupRepository, registry, db), new GroupSyncService(groupRepository, notifier),
+                "conference."+config.getDomainName());
+
         try{
             this.authController = new AuthController(3004, this.db, firebaseTokenVerifier, sessionTokenService);
         } catch (IOException e) {
@@ -193,17 +255,31 @@ public class ServerOld {
 
         this.cleanupTask = new CleanupTask(connectionPool);
 
+        // Push notifications
+        this.pushService = new PushNotificationService(
+                config.getFcmProjectId(),
+                config.getFcmServiceAccountJson(),
+                config.getApnsBundleId(),
+                config.isDev(),
+                db
+        );
+
+        // Voice/Video call signaling
+        this.callHandler = new CallSignalingHandler(
+                connectionPool, registry, pushService);
 
         this.streamProcessor = new XMPPStreamProcessor(
                 db, registry, authManager, rosterManager, metrics, connectionPool,
                 new CarbonHandler(carbonManager, deviceManager),
-                multiDeviceHandler);
+                multiDeviceHandler, callHandler);
 
         this.sessionReaper = new SessionReaper(
                 registry, metrics,
                 config.getSessionTimeoutMs(),
                 config.getReaperIntervalSec()
         );
+
+        this.streamProcessor.registerGroupHandler(groupStanzaHandler);
 
         // Register primary domain from config
         vhostManager.registerDomain(extractPrimaryDomain(),
@@ -219,22 +295,10 @@ public class ServerOld {
         // Rate limiter singleton
         this.rateLimiter = RateLimiter.getInstance();
 
-        // Push notifications
-        this.pushService = new PushNotificationService(
-                config.getFcmProjectId(),
-                config.getFcmServiceAccountJson(),
-                config.getApnsBundleId(),
-                config.isDev(),
-                db
-        );
-
         // Group messaging
         this.groupManager = new GroupManager(
                 connectionPool, db, registry, pushService);
 
-        // Voice/Video call signaling
-        this.callHandler = new CallSignalingHandler(
-                connectionPool, registry, pushService);
 
         // Bot API
         this.botApiHandler = new BotApiHandler(
@@ -265,7 +329,7 @@ public class ServerOld {
     // Public API
     // =========================================================================
 
-    public static ServerOld getInstance() {
+    public static Server getInstance() {
         if (instance == null) {
             throw new IllegalStateException(
                     "Server not initialized. Call Server.Builder.build() first.");
@@ -336,6 +400,7 @@ public class ServerOld {
     // =========================================================================
 
     private void acceptLoop(ThreadPoolExecutor jobPool) {
+
         while (running) {
             try {
                 Socket connection = serverSocket.accept();
@@ -351,11 +416,12 @@ public class ServerOld {
                     continue;
                 }
 
-                String uid = hexSessionId();
+                String sessionId = hexSessionId();
                 jobPool.execute(new ConnectionHandler(
-                        connection, uid,
+                        connection, sessionId,
                         tlsUpgrader, streamProcessor,
-                        registry, metrics
+                        registry, metrics,
+                        globalAckScheduler
                 ));
 
             } catch (IOException e) {
@@ -459,6 +525,8 @@ public class ServerOld {
         sessionReaper.stop();
 
         maintenanceExecutor.shutdown();
+
+        fanoutService.shutdown();
 
         jobPool.shutdown();
         try {
@@ -568,9 +636,9 @@ public class ServerOld {
         public String getAddress()   { return address; }
         public ServerConfig getConfig() { return config; }
 
-        public ServerOld build() throws IOException {
+        public Server build() throws IOException {
             if (instance == null) {
-                synchronized (ServerOld.class) {
+                synchronized (Server.class) {
                     if (instance == null) {
                         if (config == null) {
                             throw new IllegalStateException(
@@ -578,7 +646,7 @@ public class ServerOld {
                                             "Call setConfig(ServerConfig.load(\"config.properties\"))."
                             );
                         }
-                        instance = new ServerOld(this);
+                        instance = new Server(this);
                     }
                 }
             }

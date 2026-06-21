@@ -1,4 +1,4 @@
-package streammessenger.muc;
+package streammessenger.muc1;
 
 /**
  * Immutable room policy. WhatsApp-style groups map cleanly onto a specific

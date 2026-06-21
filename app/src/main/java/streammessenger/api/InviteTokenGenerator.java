@@ -1,5 +1,7 @@
 package streammessenger.api;
 
+import java.security.SecureRandom;
+
 public final class InviteTokenGenerator {
 
     private static final String ALPHABET =

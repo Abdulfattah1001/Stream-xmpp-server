@@ -1,10 +1,13 @@
 package streammessenger.group.handler;
 
-import com.xmpp.group.model.*;
-import com.xmpp.group.repository.GroupRepository;
-import com.xmpp.group.service.*;
-import com.xmpp.session.Session;
-import com.xmpp.stream.stanza.StanzaHandler;
+import streammessenger.group.model.*;
+import streammessenger.group.repository.GroupRepository;
+import streammessenger.group.service.*;
+import streammessenger.muc.model.GroupEventType;
+import streammessenger.muc.model.GroupSystemEvent;
+import streammessenger.session.Session;
+import streammessenger.stanza.StanzaHandler;
+
 
 import javax.xml.namespace.QName;
 import javax.xml.stream.XMLEventReader;
@@ -12,29 +15,31 @@ import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.events.Attribute;
 import javax.xml.stream.events.StartElement;
 import javax.xml.stream.events.XMLEvent;
+
+import java.time.Instant;
 import java.util.*;
 import java.util.logging.Logger;
 
 /**
  * Routes group-related XMPP stanzas.
- *
+ * <p>
  * Custom namespace: urn:xmpp:group:0
- *
+ * <p>
  * Two element types:
- *
+ * <p>
  * 1. <message type='group_chat'> - sending a message to a group
  *    <message id='m1' to='g_abc@conference.domain' type='group_chat'>
  *      <group xmlns='urn:xmpp:group:0' id='g_abc'/>
  *      <encrypted xmlns='urn:xmpp:e2ee:0' ...>BASE64</encrypted>
  *    </message>
- *
+ * <p>
  * 2. <iq type='get|set'> with group operation
  *    <iq type='set' id='q1'>
  *      <group xmlns='urn:xmpp:group:0' action='create'>
  *        <name>My Group</name>
  *      </group>
  *    </iq>
- *
+ * <p>
  * Supported actions:
  *   create                 → Create new group
  *   add_member             → Admin adds someone
@@ -108,7 +113,7 @@ public final class GroupStanzaHandler implements StanzaHandler {
         String type      = getAttr(element, "type");
         String messageId = getAttr(element, "id");
 
-        if (!"group_chat".equals(type) || to == null) {
+        if (!"groupchat".equals(type) || to == null) {
             consumeElement(reader);
             return;
         }
@@ -155,11 +160,11 @@ public final class GroupStanzaHandler implements StanzaHandler {
     // Group IQ
     // =========================================================================
 
-    private void handleGroupIQ(StartElement element, XMLEventReader reader,
-                                Session session) {
+    private void handleGroupIQ(StartElement element, XMLEventReader reader, Session session) {
         String iqId = getAttr(element, "id");
 
         ParsedGroupIQ parsed = parseGroupIQ(reader);
+
         if (parsed == null || parsed.action() == null) {
             sendIQError(session, iqId, "bad-request");
             return;
@@ -178,6 +183,7 @@ public final class GroupStanzaHandler implements StanzaHandler {
                 case "transfer_ownership" -> handleTransferOwnership(parsed, iqId, userId, session);
                 case "update_metadata"    -> handleUpdateMetadata(parsed, iqId, userId, session);
                 case "update_settings"    -> handleUpdateSettings(parsed, iqId, userId, session);
+                case "preview_link"       -> handleLinkPreview(parsed, iqId, userId, session);
                 case "create_link"        -> handleCreateLink(parsed, iqId, userId, session);
                 case "revoke_link"        -> handleRevokeLink(parsed, iqId, userId, session);
                 case "join_via_link"      -> handleJoinViaLink(parsed, iqId, userId, session);
@@ -214,7 +220,62 @@ public final class GroupStanzaHandler implements StanzaHandler {
                 p.maxMembers() > 0 ? p.maxMembers() : 256
         );
 
-        session.writeXML(String.format(
+        GroupSettings settings = repository.getSettings(group.groupId());
+        GroupMember creator = repository.getMember(group.groupId(), group.creatorUserId());
+        String response = String.format(
+                "<iq type='result' id='%s'>" +
+                        "<group xmlns='%s' action='created'>" +
+                        "<group_id>%s</group_id>" +
+                        "<jid>%s</jid>" +
+                        "<name>%s</name>" +
+                        "<description>%s</description>" +
+                        "<visibility>%s</visibility>" +
+                        "<max_members>%d</max_members>" +
+                        "<member_count>1</member_count>" +
+                        "<created_at>%s</created_at>" +
+                        "<creator_jid>%s</creator_jid>" +
+                        "<settings>" +
+                        "<only_admins_send>%b</only_admins_send>" +
+                        "<only_admins_meta>%b</only_admins_meta>" +
+                        "<only_admins_add>%b</only_admins_add>" +
+                        "<membership_approval>%b</membership_approval>" +
+                        "<disappearing_seconds>%d</disappearing_seconds>" +
+                        "</settings>" +
+                        "<my_affiliation>owner</my_affiliation>" +
+                        "<members>" +
+                        "<member jid='%s' display_name='%s' " +
+                        "avatar_url='%s' affiliation='owner' joined_at='%s'/>" +
+                        "</members>" +
+                        "</group></iq>",
+                escapeXml(iqId), GROUP_NS,
+                group.groupId(),
+                escapeXml(group.jid()),
+                escapeXml(group.name()),
+                escapeXml(group.description() != null ? group.description() : ""),
+                group.visibility().xmlValue(),
+                group.maxMembers(),
+                group.createdAt().toString(),
+                escapeXml(session.getJid()),
+                settings.onlyAdminsCanSend(),
+                settings.onlyAdminsCanEditInfo(),
+                settings.onlyAdminsCanAdd(),
+                settings.approvalRequired(),
+                settings.disappearingSeconds(),
+                escapeXml((creator.userJid() == null || creator.userJid().isBlank()) ? session.getJid() : creator.userJid()),
+                escapeXml(creator.displayName() != null
+                        ? creator.displayName() : ""),
+                escapeXml(creator.avatarUrl() != null
+                        ? creator.avatarUrl() : ""),
+                Instant.now().toString()
+        );
+        session.writeXML(response);
+
+        // A system message to actually brought the message into conversation history
+        GroupSystemEvent systemEvent = new GroupSystemEvent(GroupEventType.GROUP_CREATED, userId, userId, Instant.now());
+        session.writeXML(buildSystemMessage(group.jid(), systemEvent, session.getUid()));
+        logger.info("System message sent");
+
+        /*session.writeXML(String.format(
             "<iq type='result' id='%s'>" +
             "<group xmlns='%s' action='created'>" +
             "<group_id>%s</group_id>" +
@@ -227,7 +288,7 @@ public final class GroupStanzaHandler implements StanzaHandler {
             escapeXml(group.jid()),
             escapeXml(group.name()),
             group.stateVersion()
-        ));
+        ));*/
     }
 
     private void handleAddMember(ParsedGroupIQ p, String iqId,
@@ -305,6 +366,48 @@ public final class GroupStanzaHandler implements StanzaHandler {
         session.writeXML(buildSuccessResult(iqId, "settings_updated"));
     }
 
+    private void handleLinkPreview(ParsedGroupIQ p, String iqId, String userId, Session session){
+        if(p.linkToken() == null){
+            sendIQError(session, iqId, "bad-request");
+            return;
+        }
+
+        Optional<GroupRepository.InviteLink> link = repository.getInviteLink(p.linkToken());
+
+        if(link.isEmpty()) {
+            //TODO: This should not be error but rather a reason for the client to render the error
+            sendIQError(session, iqId, "item-not-found");
+            return;
+        }
+
+        Group group = repository.get(link.get().groupId());
+        GroupMember member = repository.getMember(group.groupId(), group.creatorUserId());
+        String response = String.format("""
+                <iq type='result' id='%s'>
+                    <group xmlns='%s'>
+                        <group_id>%s</group_id>
+                        <jid>%s</jid>
+                        <name>%s</name>
+                        <description>%s</description>
+                        <visibility>%s</visibility>
+                        <max_numbers>%d</max_numbers>
+                        <member_count>%d</member_count>
+                        <created_at>%s</created_at>
+                        <creator_jid>%s</creator_jid>
+                        <creator jid='%s' display_name='%s' avatar_url='%s' phone_number='%s'/>
+                        <revoked>%b</revoked>
+                        <is_member>%b</is_member>
+                    </group>
+                </iq>
+                """, escapeXml(iqId), GROUP_NS, escapeXml(group.groupId()), escapeXml(group.jid()),
+                escapeXml(group.name()), escapeXml(group.description()),
+                escapeXml(group.visibility().xmlValue()), group.maxMembers(),
+                group.memberCount(), group.createdAt().toEpochMilli(),escapeXml(group.creatorUserId()),
+                member.userJid(), member.displayName(), member.avatarUrl(), member.phoneNumber(),
+                link.get().revoke(), false);
+        session.writeXML(response);
+    }
+
     private void handleCreateLink(ParsedGroupIQ p, String iqId,
                                     String userId, Session session) {
         GroupRepository.InviteLink link =
@@ -314,11 +417,13 @@ public final class GroupStanzaHandler implements StanzaHandler {
             "<iq type='result' id='%s'>" +
             "<group xmlns='%s' action='link_created'>" +
             "<token>%s</token>" +
+             "<url>%s</url>" +
             "<created_by>%s</created_by>" +
             "<created_at>%s</created_at>" +
             "</group></iq>",
             escapeXml(iqId), GROUP_NS,
             link.token(),
+            "https://firm-square-bird.ngrok-free.app/"+link.token(),
             escapeXml(link.createdByUserId()),
             link.createdAt()
         ));
@@ -337,7 +442,7 @@ public final class GroupStanzaHandler implements StanzaHandler {
 
     /**
      * Join via invite link.
-     *
+     * <p>
      * KEY POINT: No "actor" here - the user is joining themselves.
      * No admin involvement required.
      * The user clicks a link → they're added.
@@ -364,6 +469,13 @@ public final class GroupStanzaHandler implements StanzaHandler {
             escapeXml(iqId), GROUP_NS,
             groupId
         ));
+
+        GroupSystemEvent systemEvent = new GroupSystemEvent(GroupEventType.MEMBER_JOINED_VIA_LINK, userId, userId, Instant.now());
+
+        String response = buildSystemMessage(groupId+"@conference.omnyrex.com", systemEvent, session.getUid());
+
+        session.writeXML(response);
+        logger.info("Notified the new user of joining via link");
     }
 
     private void handleListLinks(ParsedGroupIQ p, String iqId,
@@ -401,7 +513,7 @@ public final class GroupStanzaHandler implements StanzaHandler {
      * Returns the full member list of a group.
      * Useful when client needs to refresh the entire list
      * (e.g. after detecting state drift).
-     *
+     * <p>
      * Normal flow: members list is delivered via the snapshot
      * stanza when joining, then maintained incrementally via events.
      */
@@ -454,7 +566,7 @@ public final class GroupStanzaHandler implements StanzaHandler {
     /**
      * Lists all groups the user is a member of.
      * Used by the client at startup or to refresh group list.
-     *
+     * <p>
      * Returns lightweight info (id, name, version, last_synced).
      * Client uses this to know which groups to sync.
      */
@@ -487,9 +599,9 @@ public final class GroupStanzaHandler implements StanzaHandler {
 
     /**
      * Delta sync handler.
-     *
+     * <p>
      * Client sends what it knows; server sends what's new.
-     *
+     * <p>
      * Request:
      *   <iq type='get' id='s1'>
      *     <group xmlns='urn:xmpp:group:0' action='sync'>
@@ -497,7 +609,7 @@ public final class GroupStanzaHandler implements StanzaHandler {
      *       <known group_id='g_def' version='12'/>
      *     </group>
      *   </iq>
-     *
+     * <p>
      * Response: handled by GroupSyncService which sends:
      *   - For each up-to-date group: status='up_to_date'
      *   - For each behind group: delta events
@@ -517,7 +629,7 @@ public final class GroupStanzaHandler implements StanzaHandler {
 
         // Then process the sync (sends responses as separate stanzas)
         syncService.processSync(userId, session.getContactId(),
-                p.knownVersions(), session);
+                p.knownVersions(), p.lastSequence(),session);
     }
 
     // =========================================================================
@@ -545,6 +657,7 @@ public final class GroupStanzaHandler implements StanzaHandler {
 
                     if ("encrypted".equals(name)
                             && "urn:xmpp:e2ee:0".equals(ns)) {
+                        logger.info("Encrypted Type:: Yeah");
                         iv = getAttr(se, "iv");
                         messageType = getAttr(se, "msg_type");
                         mediaStorageKey = getAttr(se, "storage_key");
@@ -555,6 +668,13 @@ public final class GroupStanzaHandler implements StanzaHandler {
                             catch (NumberFormatException ignored) {}
                         }
                         encryptedPayload = readText(reader);
+                        depth--;
+                    }
+
+                    if("body".equals(name)){
+                        encryptedPayload = readText(reader);
+                        iv = "";
+                        messageType = "text";
                         depth--;
                     }
                 }
@@ -574,9 +694,11 @@ public final class GroupStanzaHandler implements StanzaHandler {
         String name = null, description = null, avatarUrl = null;
         String linkToken = null, visibility = null;
         int maxMembers = 0, disappearingSeconds = 0;
+
         boolean onlyAdminsSend = false, onlyAdminsEdit = true;
         boolean onlyAdminsAdd = false, approvalRequired = false;
         Map<String, Long> knownVersions = new HashMap<>();
+        Map<String, Long> lastSequences = new HashMap<>();
 
         try {
             int depth = 1;
@@ -597,9 +719,11 @@ public final class GroupStanzaHandler implements StanzaHandler {
                         // For sync action
                         String gid = getAttr(se, "group_id");
                         String ver = getAttr(se, "version");
-                        if (gid != null && ver != null) {
+                        String sequence = getAttr(se, "seq");
+                        if (gid != null && ver != null && sequence != null) {
                             try {
                                 knownVersions.put(gid, Long.parseLong(ver));
+                                lastSequences.put(gid, Long.parseLong(sequence));
                             } catch (NumberFormatException ignored) {}
                         }
                     }
@@ -635,13 +759,25 @@ public final class GroupStanzaHandler implements StanzaHandler {
                 maxMembers, disappearingSeconds,
                 onlyAdminsSend, onlyAdminsEdit, onlyAdminsAdd,
                 approvalRequired,
-                knownVersions
+                knownVersions,
+                lastSequences
         );
     }
 
     // =========================================================================
     // Response builders
     // =========================================================================
+
+    private String buildSystemMessage(String groupJid, GroupSystemEvent systemEvent, String senderId){
+        return String.format("""
+                <message id='%s' from='%s' type='groupchat'>
+                    <system xmlns='urn:xmpp:group:0'>
+                        <event type='%s' actor='%s' subject='%s'/>
+                    </system>
+                </message>
+                """, UUID.randomUUID(), groupJid+"/"+senderId,
+                systemEvent.type(), systemEvent.actorId(), systemEvent.subjectId());
+    }
 
     private String buildSuccessResult(String iqId, String action) {
         return String.format(
@@ -784,6 +920,7 @@ public final class GroupStanzaHandler implements StanzaHandler {
             boolean onlyAdminsCanEditInfo,
             boolean onlyAdminsCanAdd,
             boolean approvalRequired,
-            Map<String, Long> knownVersions
+            Map<String, Long> knownVersions,
+            Map<String, Long> lastSequence
     ) {}
 }

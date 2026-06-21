@@ -101,7 +101,7 @@ public final class SessionReaper {
                 if (shouldReap) {
                     logger.info(String.format(
                         "Reaping session uid=%s contactId=%s idle=%dms authenticated=%b",
-                        session.getUid(), session.getContactId(), idle, session.isAuthenticated()
+                        session.getSessionId(), session.getContactId(), idle, session.isAuthenticated()
                     ));
 
                     session.writeStreamError(
@@ -117,7 +117,7 @@ public final class SessionReaper {
             } catch (Exception e) {
                 // Isolation: one bad session must not crash the reaper
                 logger.warning("Reaper error for session uid="
-                        + session.getUid() + ": " + e.getMessage());
+                        + session.getSessionId() + ": " + e.getMessage());
             }
         }
 

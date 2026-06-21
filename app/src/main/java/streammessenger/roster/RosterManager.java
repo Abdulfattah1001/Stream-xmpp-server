@@ -4,6 +4,7 @@ import streammessenger.db.DatabaseManager;
 import  streammessenger.session.Session;
 import  streammessenger.session.SessionRegistry;
 
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.List;
@@ -11,11 +12,11 @@ import java.util.logging.Logger;
 
 /**
  * Manages all roster (contact list) operations.
- *
+ * <p>
  * Roster operations always involve two things:
  *  1. Persisting the change to the database
  *  2. Pushing the change to all active resources of the affected user(s)
- *
+ * <p>
  * RFC 6121 §2 defines the full roster management protocol.
  */
 public final class RosterManager {
@@ -37,11 +38,11 @@ public final class RosterManager {
 
     /**
      * Handles: <iq type='get'><query xmlns='jabber:iq:roster'/></iq>
-     *
+     * <p>
      * Returns the user's complete contact list.
      * Supports roster versioning: if client sends ver='X' and we agree,
      * we can send an empty result meaning "your cached roster is current".
-     *
+     *<p>
      * @param contactId The requesting user's bare JID
      * @param iqId      The IQ stanza ID (must be echoed in response)
      * @param clientVer The roster version the client has cached (may be null)
@@ -78,7 +79,7 @@ public final class RosterManager {
         xml.append("</query></iq>");
         session.writeXML(xml.toString());
 
-        logger.fine("Roster sent to " + contactId
+        logger.info("Roster sent to " + contactId
                 + " items=" + items.size() + " ver=" + currentVer);
     }
 
@@ -92,13 +93,12 @@ public final class RosterManager {
      *              <item jid='friend@domain' name='Friend'/>
      *            </query>
      *          </iq>
-     *
+     * <p>
      * Adds, updates, or removes a contact.
      * After DB update, pushes the change to ALL of the user's active resources.
      */
     public void handleRosterSet(RosterItem item, String iqId, Session session) {
         String ownerContactId = session.getContactId();
-
         if ("remove".equals(item.subscription())) {
             db.deleteRosterItem(ownerContactId, item.jid());
             logger.info("Roster item removed: " + ownerContactId + " -> " + item.jid());
@@ -108,10 +108,10 @@ public final class RosterManager {
         }
 
         // RFC 6121 §2.1.6: Server MUST send roster push to all connected resources
-        pushRosterUpdateToAllResources(ownerContactId, item);
+        //pushRosterUpdateToAllResources(ownerContactId, item);
 
         // Acknowledge the set request
-        session.writeXML(String.format("<iq type='result' id='%s'/>", iqId));
+        //session.writeXML(String.format("<iq type='result' id='%s'/>", iqId));
     }
 
     // =========================================================================
@@ -120,11 +120,11 @@ public final class RosterManager {
 
     /**
      * Pushes a roster update to all of a user's currently connected sessions.
-     *
+     * <p>
      * This is called when:
      *  - The user modifies their own roster
      *  - A subscription state changes (contact approved/denied friend request)
-     *
+     * <p>
      * The 'from' attribute is intentionally absent per RFC 6121 §2.1.6.
      */
     public void pushRosterUpdateToAllResources(String contactId, RosterItem item) {
@@ -146,7 +146,7 @@ public final class RosterManager {
         }
     }
 
-    // =========================================================================
+    // ==========================================================/===============
     // Subscription state management
     // Called by SubscriptionHandler when subscription state changes
     // =========================================================================
@@ -185,7 +185,7 @@ public final class RosterManager {
      * Computes a version token for the roster.
      * If the roster hasn't changed, the token is the same.
      * Clients cache by this token to avoid re-fetching unchanged rosters.
-     *
+     * <p>
      * Implementation: SHA-1 hash of all JIDs + subscription states,
      * encoded as hex. Not cryptographically sensitive - just a change detector.
      */
@@ -193,10 +193,10 @@ public final class RosterManager {
         try {
             MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
             for (RosterItem item : items) {
-                sha1.update(item.jid().getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                sha1.update(item.subscription().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                sha1.update(item.jid().getBytes(StandardCharsets.UTF_8));
+                sha1.update(item.subscription().getBytes(StandardCharsets.UTF_8));
                 if (item.ask() != null) {
-                    sha1.update(item.ask().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    sha1.update(item.ask().getBytes(StandardCharsets.UTF_8));
                 }
             }
             byte[] digest = sha1.digest();

@@ -3,6 +3,7 @@ package streammessenger.stanza;
 
 import javax.xml.stream.XMLEventReader;
 import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.events.Attribute;
 import javax.xml.stream.events.Characters;
 import javax.xml.stream.events.XMLEvent;
 import javax.xml.stream.events.StartElement;
@@ -31,7 +32,7 @@ public final class AuthHandler implements StanzaHandler {
     @Override
     public void handle(StartElement element, XMLEventReader reader, Session session) {
         // Extract mechanism attribute
-        javax.xml.stream.events.Attribute mechAttr = element.getAttributeByName(
+        Attribute mechAttr = element.getAttributeByName(
                 new javax.xml.namespace.QName("mechanism"));
 
         if (mechAttr == null) {
@@ -44,15 +45,16 @@ public final class AuthHandler implements StanzaHandler {
         String payload = extractPayload(reader);
 
         try {
-            authManager.authenticate(mechanism, payload, session);
+            //TODO: authManager.authenticate(mechanism, payload, session);
+            //
+            authManager.authenticateUserToken(mechanism, payload, session);
 
             // RFC 6120: On success, send <success> and the client must
             // open a new stream
             session.writeXML("<success xmlns='" + SASL_NS + "'/>");
-            logger.info("SASL success for uid=" + session.getUid());
 
         } catch (AuthenticationException e) {
-            logger.warning("Auth failed uid=" + session.getUid()
+            logger.warning("Auth failed uid=" + session.getSessionId()
                     + " reason=" + e.getReason() + ": " + e.getMessage());
             String failureCondition = mapFailureCondition(e.getReason());
             session.writeXML(

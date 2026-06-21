@@ -1,13 +1,21 @@
 package streammessenger.stanza;
 
 
+import org.json.XML;
+
 import javax.xml.stream.XMLEventReader;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.events.StartElement;
 import javax.xml.stream.events.XMLEvent;
 import javax.xml.namespace.QName;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 import java.util.logging.Logger;
 
+import streammessenger.api.CloudinarySlotManager;
+import streammessenger.call.CallSignalingHandler;
 import streammessenger.db.DatabaseManager;
 import streammessenger.roster.RosterItem;
 import streammessenger.roster.RosterManager;
@@ -19,13 +27,13 @@ import javax.xml.stream.events.Attribute;
 
 /**
  * Routes <iq> stanzas to the correct sub-handler based on child element namespace.
- *
+ * <p>
  * Supported namespaces:
  *   urn:ietf:params:xml:ns:xmpp-bind  → ResourceBindHandler
  *   jabber:iq:roster                   → RosterManager
  *   urn:ietf:params:xml:ns:xmpp-ping  → inline ping handler
  *   http://jabber.org/protocol/disco#info → inline disco handler
- *
+ * <p>
  * Stateless singleton.
  */
 public final class IQHandler implements StanzaHandler {
@@ -34,17 +42,26 @@ public final class IQHandler implements StanzaHandler {
 
     private static final String NS_BIND      = "urn:ietf:params:xml:ns:xmpp-bind";
     private static final String NS_ROSTER    = "jabber:iq:roster";
+    private static final String CALL_NS = "urn:xmpp:call:0";
+    private static final String UPLOAD_SLOT = "urn:xmpp:http:upload:0";
+    private static final String PRIVACY_NS = "urn:xmpp:custom:privacy:0";
     private static final String NS_PING      = "urn:ietf:params:xml:ns:xmpp-ping";
     private static final String NS_DISCO     = "http://jabber.org/protocol/disco#info";
     private static final String NS_SESSION   = "urn:ietf:params:xml:ns:xmpp-session";
-
+    private static final String NS_MUC = "http://jabber.org/protocol/muc";
     private final ResourceBindHandler bindHandler;
+    private final CallSignalingHandler callSignalingHandler;
     private final RosterManager rosterManager;
+    private final PrivacyHandler privacyHandler;
+    private final CloudinarySlotManager cloudinarySlotManager;
 
     public IQHandler(DatabaseManager db, SessionRegistry registry,
-                     RosterManager rosterManager) {
+                     RosterManager rosterManager, CallSignalingHandler callSignalingHandler) {
         this.bindHandler = new ResourceBindHandler(db);
         this.rosterManager = rosterManager;
+        this.callSignalingHandler = callSignalingHandler;
+        this.cloudinarySlotManager = new CloudinarySlotManager();
+        this.privacyHandler = new PrivacyHandler(db, registry);
     }
 
     @Override
@@ -75,9 +92,7 @@ public final class IQHandler implements StanzaHandler {
                 bindHandler.handle(element, child.replayReader(reader), session);
             }
 
-            case NS_ROSTER -> {
-                handleRosterIQ(type, id, child, reader, session);
-            }
+            case NS_ROSTER -> handleRosterIQ(type, id, child, reader, session);
 
             case NS_PING -> {
                 handlePing(id, from, session);
@@ -97,10 +112,53 @@ public final class IQHandler implements StanzaHandler {
                 ));
                 consumeElement(reader);
             }
+            case CALL_NS -> callSignalingHandler.handle(element, reader, session);
+
+            case PRIVACY_NS -> privacyHandler.handle(element, reader, session);
+
+            case UPLOAD_SLOT ->  {
+                String contentType = null;
+                try{
+                    XMLEvent event = reader.nextEvent();
+                    if(event.isStartElement()){
+                        contentType = event.asStartElement().getAttributeByName(new QName("content-type")).getValue();
+                    }
+                    //if(event.isEndElement()) {}
+                }catch (XMLStreamException ignore){}
+                String finalContentType = contentType;
+                Thread.ofVirtual().name("upload_slot").start(() -> {
+                    Map<String, Object> generatedUploadSlot = cloudinarySlotManager.generateUploadSlot(session.getContactId(), finalContentType);
+
+                    String xml = String.format("""
+                                <iq type='result'
+                                from='upload.omnyrex.com'
+                                to='%s'
+                                id='%s'>
+                                <slot xmlns='%s'>
+                                <put url='%s'>
+                                <header name='api_key'>%s</header>
+                                <header name='signature'>%s</header>
+                                <header name='timestamp'>%s</header>
+                                <header name='folder'>%s</header>
+                                </put>
+                                </slot>
+                                </iq>""", session.getJid(), id, UPLOAD_SLOT,
+                            generatedUploadSlot.get("upload_url"),
+                            generatedUploadSlot.get("api_key"),generatedUploadSlot.get("signature"),
+                            generatedUploadSlot.get("timestamp"), generatedUploadSlot.get("folder"));
+                    logger.info("Final XML: "+xml);
+                    session.writeXML(xml);
+                });
+                consumeElement(reader);
+            }
+
+            case NS_MUC ->  {
+                logger.info("Handling Group or room creatioin");
+                consumeElement(reader);
+            }
 
             default -> {
-                logger.fine("Unsupported IQ namespace: " + child.namespace()
-                        + " type=" + type);
+                logger.fine("Unsupported IQ namespace: " + child.namespace() + " type=" + type);
                 sendError(session, id, "feature-not-implemented", "cancel");
                 consumeElement(reader);
             }
@@ -116,10 +174,10 @@ public final class IQHandler implements StanzaHandler {
         switch (type) {
             case "get" -> {
                 // Client wants their contact list
+                @SuppressWarnings("unused")
                 String ver = child.getAttribute("ver"); // roster version (may be null)
                 consumeElement(reader); // consume the <query/> element
-                rosterManager.handleRosterGet(
-                        session.getContactId(), iqId, ver, session);
+                rosterManager.handleRosterGet(session.getContactId(), iqId, ver, session);
             }
 
             case "set" -> {
@@ -209,7 +267,7 @@ public final class IQHandler implements StanzaHandler {
 
     /**
      * Parses a <item> element from a roster set IQ.
-     *
+     * <p>
      * <query xmlns='jabber:iq:roster'>
      *   <item jid='bob@domain' name='Bob' subscription='none'>
      *     <group>Friends</group>

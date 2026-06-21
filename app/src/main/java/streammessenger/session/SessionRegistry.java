@@ -1,6 +1,5 @@
 package streammessenger.session;
 
-
 import java.util.Collection;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -11,19 +10,23 @@ import java.util.stream.Collectors;
 
 /**
  * Central registry for all active sessions.
- *
+ * <p>
  * Index structure:
- *
+ * <p>
  *   PRIMARY:   uid → Session
  *              One entry per TCP connection, from accept() to socket close.
- *
+ * <p>
  *   SECONDARY: contactId → Set<uid>
  *              One contactId can map to MULTIPLE uids (multiple resources).
  *              e.g. alice@domain logged in on phone AND laptop simultaneously.
- *
+ * <p>
  * This fixes the original code's broken single-uid-per-contact model.
  */
 public final class SessionRegistry {
+
+    /**
+     * For the context, contactId -> u_1kufh2; uid -> 32bits number e.t.c
+     */
 
     private static final Logger logger = Logger.getLogger(SessionRegistry.class.getName());
 
@@ -52,29 +55,32 @@ public final class SessionRegistry {
      * At this point the session has no contactId - just a uid.
      */
     public void register(Session session) {
-        byUid.put(session.getUid(), session);
-        logger.fine("Registered session uid=" + session.getUid());
+        byUid.put(session.getSessionId(), session);
+        logger.fine("Registered session uid=" + session.getSessionId());
     }
 
     /**
      * Binds a contactId to a session after successful authentication.
-     *
+     * <p>
      * Supports multiple resources: Alice can log in from phone AND laptop.
      * Both sessions get added to the Set for alice@domain.
-     *
+     * <p>
      * If the same uid is already bound (re-auth on same connection),
      * this is idempotent.
      */
     public void bindAuthenticatedSession(String contactId, Session session) {
+        logger.info("session state:: UID => "+session.getUid() +
+                " :: contactID =>"+session.getContactId() +
+                " :: JID =>"+session.getJid());
         contactToUids.compute(contactId, (k, existingUids) -> {
             Set<String> uids = existingUids != null
                     ? existingUids
                     : ConcurrentHashMap.newKeySet();
-            uids.add(session.getUid());
+            uids.add(session.getSessionId());
             return uids;
         });
         logger.info("Session bound: contactId=" + contactId
-                + " uid=" + session.getUid()
+                + " sessionId=" + session.getSessionId()
                 + " totalResourcesForContact=" + contactToUids.get(contactId).size());
     }
 
@@ -87,7 +93,7 @@ public final class SessionRegistry {
      * Safe to call multiple times.
      */
     public void remove(Session session) {
-        removeByUid(session.getUid(), session.getContactId());
+        removeByUid(session.getSessionId(), session.getContactId());
     }
 
     public void removeByUid(String uid, String contactId) {
@@ -114,10 +120,10 @@ public final class SessionRegistry {
 
     /**
      * Returns ONE session for a contactId.
-     *
+     * <p>
      * When a user has multiple resources (phone + laptop), this returns
      * the one with the highest priority, or the most recently active one.
-     *
+     * <p>
      * Used by MessageHandler when routing to a bare JID (no resource specified).
      */
     public Optional<Session> getByContactId(String contactId) {

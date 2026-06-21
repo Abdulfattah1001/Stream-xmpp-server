@@ -1,11 +1,15 @@
 package streammessenger.muc.service;
 
-import com.xmpp.muc.exception.MucException;
-import com.xmpp.muc.model.*;
-import com.xmpp.muc.repository.GroupRepository;
 
 import java.time.Instant;
 import java.util.logging.Logger;
+
+import streammessenger.muc.exceptions.MucException;
+import streammessenger.muc.model.Affiliation;
+import streammessenger.muc.model.GroupRoom;
+import streammessenger.muc.model.GroupSettings;
+import streammessenger.muc.model.GroupVisibility;
+import streammessenger.muc.repository.GroupRepository;
 
 /**
  * High-level service for group CRUD operations.
@@ -30,9 +34,9 @@ public final class GroupService {
     private final FanoutService fanoutService;
 
     public GroupService(GroupRepository repository,
-                         GroupRegistry registry,
-                         PresenceBroadcaster presenceBroadcaster,
-                         FanoutService fanoutService) {
+                        GroupRegistry registry,
+                        PresenceBroadcaster presenceBroadcaster,
+                        FanoutService fanoutService) {
         this.repository          = repository;
         this.registry            = registry;
         this.presenceBroadcaster = presenceBroadcaster;
@@ -44,9 +48,9 @@ public final class GroupService {
     // =========================================================================
 
     public GroupRoom createGroup(String name, String description,
-                                  String creatorUserId,
-                                  GroupVisibility visibility,
-                                  int maxMembers) {
+                                 String creatorUserId,
+                                 GroupVisibility visibility,
+                                 int maxMembers) {
         // Validation
         if (name == null || name.isBlank()) {
             throw new MucException(MucException.Code.VALIDATION_ERROR,

@@ -1,25 +1,35 @@
 package streammessenger.muc.service;
 
-import com.xmpp.muc.model.*;
-import com.xmpp.session.Session;
-import com.xmpp.session.SessionRegistry;
 
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
 
+import streammessenger.db.DatabaseManager;
+import streammessenger.muc.model.Affiliation;
+import streammessenger.muc.model.GroupEventType;
+import streammessenger.muc.model.GroupRoom;
+import streammessenger.muc.model.GroupSystemEvent;
+import streammessenger.muc.model.Occupant;
+import streammessenger.muc.repository.GroupRepository;
+import streammessenger.session.Session;
+import streammessenger.session.SessionRegistry;
+
 /**
  * Distributes group messages to all online occupants.
- *
+ * <p>
  * Two key optimizations:
- *
+ * <p>
  * 1. PARALLEL DELIVERY:
  *    Don't deliver sequentially - one slow socket would block everyone.
  *    Use a dedicated thread pool to fan out in parallel.
- *
+ * <p>
  * 2. ONLINE-FIRST FILTERING:
  *    Iterate the room's in-memory occupants (already filtered to online).
  *    Don't query DB for membership on every message.
- *
+ * <p>
  * For offline members: a separate background job stores in
  * group_message_history for later retrieval (caught up on next presence join).
  */
@@ -30,6 +40,7 @@ public final class FanoutService {
 
     private final SessionRegistry sessionRegistry;
 
+    private final DatabaseManager databaseManager;
     /**
      * Bounded parallel executor.
      * 20 threads handles 1M+ deliveries/sec across many rooms.
@@ -41,8 +52,9 @@ public final class FanoutService {
             new ThreadPoolExecutor.CallerRunsPolicy()
     );
 
-    public FanoutService(SessionRegistry sessionRegistry) {
+    public FanoutService(SessionRegistry sessionRegistry, DatabaseManager db) {
         this.sessionRegistry = sessionRegistry;
+        this.databaseManager = db;
     }
 
     /**
@@ -53,7 +65,7 @@ public final class FanoutService {
      * @param stanzaXml   The complete <message> stanza ready to send
      */
     public void fanoutMessage(GroupRoom room, String senderUserId,
-                                String stanzaXml) {
+                              String stanzaXml) {
 
         for (Occupant occupant : room.getOccupants()) {
             if (occupant.userId().equals(senderUserId)) continue;
@@ -73,11 +85,7 @@ public final class FanoutService {
         }
     }
 
-    Continuing from `FanoutService.java` where it stopped:
 
-### `muc/service/FanoutService.java` (continued)
-
-```java
     public void broadcastMemberAdded(GroupRoom room, String newMemberUserId,
                                       String newMemberJid,
                                       Affiliation affiliation) {
@@ -93,6 +101,46 @@ public final class FanoutService {
         );
 
         fanoutToAll(room, stanza);
+    }
+
+    public void broadcastMemberAddedToGroup(GroupRoom room, String newMemberUserId,
+                                            String newMemberJid,
+                                            List<GroupRepository.MemberRecord> memberRecordList) {
+        if(memberRecordList.isEmpty()) return;
+        GroupSystemEvent systemEvent = new GroupSystemEvent(GroupEventType.MEMBER_JOINED_VIA_LINK, newMemberUserId, newMemberUserId, Instant.now());
+        String from = room.getJid()+"/"+newMemberUserId;
+        StringBuilder members = new StringBuilder();
+        members.append("<membership id='" + UUID.randomUUID().toString() + "' group_id='" + room.getGroupId() + "'>"); // A unidirectional stanza, only server can sends <membership>
+        for(GroupRepository.MemberRecord record: memberRecordList){
+            members.append("<member display_name='").append(record.nickname())
+                    .append("' avatar_url='").append(record.avatar_url())
+                    .append("' phone_number='").append(record.phone_number())
+                    .append("' display_status='").append(record.status())
+                    .append("' affiliation='").append(record.affiliation().name())
+                    .append("' uid='").append(record.userId())
+                    .append("' jid='").append(record.userJid()).append("'/>");
+        }
+        members.append("</membership>");
+        logger.info("Member number to sent is: "+members);
+        /*sessionRegistry.getByContactId(newMemberUserId)
+                .filter(Session::isAuthenticated)
+                .ifPresentOrElse(s -> s.writeXML(members.toString()), () -> {
+                    //TODO: Cache it till the user can receive it
+                    logger.info("Can't send the members list at the moment");
+                });*/
+        for(GroupRepository.MemberRecord record : memberRecordList){
+            String text = newMemberUserId + " joined";
+            String id = UUID.randomUUID().toString();
+            String stanza = String.format("<message id='%s' from='%s' type='groupchat'>" +
+                    "<body>%s</body>" +
+                    "<system xmlns='urn:xmpp:group:0'>" +
+                        "<event type='" + systemEvent.type().name() + "' actor='" + systemEvent.actorId() + "' subject='" + systemEvent.subjectId() + "' />"+
+                    "</system>" +
+                    "</message>", id, from, text);
+            sessionRegistry.getByContactId(record.userId())
+                    .filter(Session::isAuthenticated)
+                    .ifPresentOrElse(s -> s.writeXML(stanza), () -> databaseManager.storeSystemEvent(id, from, systemEvent.type().name(), systemEvent.actorId(), systemEvent.subjectId(), record.userId()));
+        }
     }
 
     public void broadcastMemberRemoved(GroupRoom room, String removedUserId,
@@ -181,6 +229,23 @@ public final class FanoutService {
     }
 
     private void fanoutToAll(GroupRoom room, String stanza) {
+        for (Occupant occupant : room.getOccupants()) {
+            fanoutExecutor.execute(() -> {
+                try {
+                    sessionRegistry.getByUid(occupant.sessionUid())
+                            .filter(Session::isAuthenticated)
+                            .ifPresent(s -> s.writeXML(stanza));
+                } catch (Exception e) {
+                    logger.warning("Fanout error: " + e.getMessage());
+                }
+            });
+        }
+    }
+
+    private void fanOutToAllMembers(GroupRoom room, String stanza) {
+        logger.info("Fanning out new member to group members");
+        //TODO: Gets the group members to send a system message [joined,removed,banned e.t.c]
+
         for (Occupant occupant : room.getOccupants()) {
             fanoutExecutor.execute(() -> {
                 try {

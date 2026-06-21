@@ -236,7 +236,7 @@ public final class VirtualHostManager {
 
     /**
      * Extracts the bare JID (no resource) from a full JID.
-     *
+     * <p>
      * "alice@domain.com/mobile" → "alice@domain.com"
      */
     public static String toBareJid(String jid) {
@@ -247,7 +247,7 @@ public final class VirtualHostManager {
 
     /**
      * Validates that a JID is structurally correct.
-     *
+     * <p>
      * Rules (simplified from RFC 7622):
      *  - Must have exactly one '@'
      *  - Local part must not be empty

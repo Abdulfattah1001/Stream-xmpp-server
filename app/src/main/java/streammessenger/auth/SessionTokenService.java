@@ -1,15 +1,16 @@
 package streammessenger.auth;
 
 
+import org.slf4j.LoggerFactory;
+
 import java.security.SecureRandom;
-import java.time.Instant;
 import java.util.logging.Logger;
 
 import streammessenger.db.DatabaseManager;
 
 /**
  * Issues and validates session tokens.
- *
+ * <p>
  * Tokens NEVER expire on their own.
  * They are only invalidated by explicit revocation:
  *   - User logs out (this device)
@@ -54,19 +55,17 @@ public final class SessionTokenService {
                 ipAddress
         );
 
-        logger.info("Session token issued: userId=" + userId
-                + " platform=" + platform);
-
+        logger.info("Session token issued: userId=" + userId + " platform=" + platform);
         return new IssuedToken(rawToken, userId);
     }
 
     /**
      * Validates a session token.
-     *
+     * <p>
      * SIGN UP path:  never called (token just issued)
      * LOG IN path:   called with stored token from device
      * XMPP auth:     called on every XMPP connection
-     *
+     * <p>
      * Returns null if:
      *   - Token not found in DB
      *   - Token has been revoked (user logged out)
@@ -105,10 +104,10 @@ public final class SessionTokenService {
 
     /**
      * Generates a cryptographically random session token.
-     *
+     * <p>
      * Format: st_<32 hex chars>
      * Entropy: 128 bits (16 bytes)
-     *
+     * <p>
      * At 1 billion tokens the collision probability is:
      * 1 - e^(-n²/2m) ≈ 1.47 × 10⁻¹⁰ (essentially zero)
      */
@@ -136,7 +135,7 @@ public final class SessionTokenService {
     ) {}
 
     public record ValidatedToken(
-            String userId,
+            String userId, // u_7f3a9b2ce
             String pushToken,
             String platform
     ) {}

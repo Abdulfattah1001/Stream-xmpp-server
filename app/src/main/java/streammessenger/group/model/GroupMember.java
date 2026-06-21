@@ -4,7 +4,7 @@ import java.time.Instant;
 
 /**
  * A member of a group.
- *
+ * <p>
  * No "occupant" concept - if you're a member, you're a member.
  * Whether you're currently online is determined by SessionRegistry,
  * not by any group-specific presence.
@@ -12,6 +12,9 @@ import java.time.Instant;
 public record GroupMember(
         String userId,
         String userJid,
+        String displayStatus,
+        String phoneNumber, // Pulled from the users tale
+        String avatarUrl, // Pulled from the users table
         String displayName,    // Pulled from users table
         boolean isOwner,
         boolean isAdmin,

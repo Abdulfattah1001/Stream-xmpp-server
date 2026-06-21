@@ -1,4 +1,4 @@
-package streammessenger.muc;
+package streammessenger.muc1;
 
 /**
  * A participant's <b>persistent</b> relationship with a room (XEP-0045 §5.2).

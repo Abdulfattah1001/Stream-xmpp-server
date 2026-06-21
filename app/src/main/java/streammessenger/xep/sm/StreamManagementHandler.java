@@ -66,7 +66,7 @@ public final class StreamManagementHandler {
      * How long to keep SM state after disconnect.
      * Client has this window to reconnect and resume.
      * After this: state is gone, client must do full auth.
-     *
+     * <p>
      * 5 minutes covers most mobile network scenarios.
      * Increase to 10+ minutes for flakier networks.
      */
@@ -78,7 +78,7 @@ public final class StreamManagementHandler {
      * Stores SM state after session disconnects.
      * Key: smId
      * Value: PersistedSmState (state + savedAt timestamp)
-     *
+     * <p>
      * Thread safe: ConcurrentHashMap
      */
     private final ConcurrentHashMap<String, PersistedSmState> smStateStore =
@@ -106,11 +106,11 @@ public final class StreamManagementHandler {
 
     /**
      * Client sends <enable xmlns='urn:xmpp:sm:3' resume='true'/>
-     *
+     * <p>
      * Must be called AFTER authentication and resource binding.
      * Creates a new SM state and attaches it to the session.
      * Responds with <enabled id='smId' resume='true'/>.
-     *
+     * <p>
      * The smId is the client's key for future resumption.
      * Client stores it alongside the session token.
      */
@@ -132,13 +132,14 @@ public final class StreamManagementHandler {
 
         String smId = generateSmId();
         session.enableStreamManagement(smId, resumable);
+        logger.info("The stream id generated is: "+smId);
 
         session.writeXML(String.format(
             "<enabled xmlns='%s' id='%s' resume='%s'/>",
             SM_NS, smId, resumable
         ));
 
-        logger.info("SM enabled uid=" + session.getUid()
+        logger.info("SM enabled uid=" + session.getSessionId()
                 + " smId=" + smId + " resumable=" + resumable);
     }
 
@@ -152,6 +153,7 @@ public final class StreamManagementHandler {
      * Symmetric to the client acking server stanzas with <a h='N'/>.
      */
     public void handleRequestAck(Session session) {
+        logger.info("Handling client <r> tags");
         if (!session.hasStreamManagement()) return;
 
         session.writeXML(String.format(
@@ -172,15 +174,16 @@ public final class StreamManagementHandler {
 
         Attribute hAttr = element.getAttributeByName(new QName("h"));
         if (hAttr == null) {
-            logger.warning("SM <a> missing h from uid=" + session.getUid());
+            logger.warning("SM <a> missing h from uid=" + session.getSessionId());
             return;
         }
 
         try {
             long h = Long.parseLong(hAttr.getValue().trim());
+            logger.info("Processing  ack from client");
             session.processAck(h);
 
-            logger.fine("SM ack: uid=" + session.getUid()
+            logger.fine("SM ack: uid=" + session.getSessionId()
                     + " h=" + h
                     + " remaining=" + session.getSmState().getUnackedCount());
 
@@ -207,7 +210,6 @@ public final class StreamManagementHandler {
     public boolean handleResume(StartElement element,
                                  XMLEventReader reader,
                                  Session newSession) {
-
         Attribute prevIdAttr = element.getAttributeByName(
                 new QName("previd"));
         Attribute hAttr = element.getAttributeByName(new QName("h"));
@@ -231,8 +233,7 @@ public final class StreamManagementHandler {
         PersistedSmState persisted = smStateStore.remove(prevSmId);
 
         if (persisted == null) {
-            logger.info("SM resume failed: state not found smId=" + prevSmId
-                    + " uid=" + newSession.getUid());
+            logger.info("SM resume failed: state not found smId=" + prevSmId + " uid=" + newSession.getSessionId());
             newSession.writeXML(buildFailed("item-not-found"));
             return false;
         }
@@ -283,9 +284,7 @@ public final class StreamManagementHandler {
 
         // 6. Retransmit everything client didn't confirm receiving
         //    These are stanzas with seqNum > h
-        List<UnackedStanza> toRetransmit = smState.getUnackedAfter(h
-
-        );
+        List<UnackedStanza> toRetransmit = smState.getUnackedAfter(h);
 
         logger.info(String.format(
                 "SM resuming: smId=%s retransmitting=%d stanzas after h=%d",
@@ -298,7 +297,7 @@ public final class StreamManagementHandler {
 
         logger.info(String.format(
                 "SM resumed: uid=%s contactId=%s smId=%s retransmitted=%d",
-                newSession.getUid(),
+                newSession.getSessionId(),
                 persisted.contactId(),
                 prevSmId,
                 toRetransmit.size()
@@ -309,14 +308,15 @@ public final class StreamManagementHandler {
 
     /**
      * Called when a session with active SM disconnects.
-     *
+     * <p>
      * Moves the SM state to smStateStore so the client can resume.
      * If SM is not resumable: state is discarded immediately.
-     *
+     * <p>
      * Called by ConnectionHandler.cleanup() before removing the session
      * from the registry.
      */
     public void onSessionDisconnect(Session session) {
+        logger.info("A session has just disconnected");
         if (!session.hasStreamManagement()) return;
 
         StreamManagementState smState = session.getSmState();
@@ -324,7 +324,7 @@ public final class StreamManagementHandler {
         if (!smState.isResumable()) {
             smState.disable();
             logger.info("SM state discarded (not resumable) uid="
-                    + session.getUid());
+                    + session.getSessionId());
             return;
         }
 
@@ -340,7 +340,7 @@ public final class StreamManagementHandler {
                 "SM state saved: smId=%s uid=%s contactId=%s " +
                         "unacked=%d ttlMs=%d",
                 smState.getSmId(),
-                session.getUid(),
+                session.getSessionId(),
                 session.getContactId(),
                 smState.getUnackedCount(),
                 SM_STATE_TTL_MS
@@ -354,7 +354,7 @@ public final class StreamManagementHandler {
     /**
      * Removes expired SM states from the store.
      * Runs every 2 minutes as a background task.
-     *
+     * <p>
      * After TTL expires, the client MUST do full re-authentication.
      * The session token stored on the device handles this transparently.
      */
@@ -438,7 +438,7 @@ public final class StreamManagementHandler {
 
     /**
      * Wraps SM state with everything needed to restore a session.
-     *
+     * <p>
      * contactId and resource are stored separately because the Session
      * object itself is gone - only the SM state is preserved.
      */

@@ -12,25 +12,26 @@ import java.util.logging.Logger;
 
 /**
  * Background task that periodically cleans up expired data.
- *
+ * <p>
  * Schedule:
  *   Every 1 hour:
  *     - Delete expired status (> 24 hours old)
  *     - Delete expired offline messages (> 30 days old)
  *     - Delete orphaned media uploads (never attached, > 1 day old)
  *     - Delete expired stream management sessions
- *
+ *     - Delete expired Blog (>7 Days olds)
+ * <p>
  * Why 30 days for offline messages:
  *   - WhatsApp: 30 days
  *   - Signal:   30 days
  *   - Telegram: unlimited (but stores on their servers)
- *
+ * <p>
  *   30 days balances:
  *     ✅ User gets messages after holiday
  *     ✅ User gets messages after phone repair
  *     ✅ Not storing data forever (GDPR friendly)
  *     ✅ Reasonable storage cost
- *
+ * <p>
  * Why 24 hours for status:
  *   - Instagram Stories: 24 hours
  *   - WhatsApp Status:   24 hours
@@ -47,6 +48,8 @@ public final class CleanupTask {
 
     // Status lifetime (must match DB default of 24 hours)
     private static final int STATUS_TTL_HOURS = 24;
+
+    private static final int BLOG_TTL_DAYS = 7;
 
     // SM session lifetime after disconnect
     private static final int SM_SESSION_TTL_MINUTES = 5;
@@ -71,7 +74,8 @@ public final class CleanupTask {
 
         logger.info("Database cleanup task started. " +
                 "Offline messages TTL: " + OFFLINE_MESSAGE_TTL_DAYS + " days. " +
-                "Status TTL: " + STATUS_TTL_HOURS + " hours.");
+                "Status TTL: " + STATUS_TTL_HOURS + " hours." +
+                "Blog TTL: " + BLOG_TTL_DAYS + " hours.");
     }
 
     public void stop() {
@@ -114,13 +118,13 @@ public final class CleanupTask {
 
     /**
      * Deletes expired status entries.
-     *
+     * <p>
      * A status expires 24 hours after creation.
      * expires_at is set in the DB on INSERT as NOW() + INTERVAL '24 hours'
-     *
+     * <p>
      * Also deletes associated status_views and status_visibility_list
      * via CASCADE foreign keys.
-     *
+     * <p>
      * Before deleting: collect media_storage_keys so we can
      * delete the actual media files from object storage.
      */
@@ -147,6 +151,23 @@ public final class CleanupTask {
         }
 
         return deleted;
+    }
+
+    /**
+     * Deletes expired blog entries.
+     * <p>
+     * A blog expires 7 days after creation.
+     * expires_at is set in the DB on INSERT as NOW() + INTERVAL '24 hours'
+     * <p>
+     * Also deletes associated blog_views and blog_visibility_list
+     * via CASCADE foreign keys.
+     * <p>
+     * Before deleting: collect media_storage_keys so we can
+     * delete the actual media files from object storage.
+     */
+    private int cleanExpiredBlog() {
+        //TODO: To be implemented later
+        return 0;
     }
 
     /**
@@ -267,8 +288,8 @@ public final class CleanupTask {
      */
     private int cleanExpiredSessionTokens() {
         String sql = """
-            DELETE FROM session_tokens
-            WHERE revoked_at < NOW() - INTERVAL '30 days'
+                DELETE FROM session_tokens
+                WHERE revoked_at < NOW() - INTERVAL 30 DAY
             """;
 
         return executeUpdate(sql, "cleanExpiredSessionTokens");

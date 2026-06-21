@@ -1,15 +1,14 @@
 package streammessenger.group.model;
 
-ackage com.xmpp.group.model;
 
 import java.time.Instant;
 
 /**
  * Represents one change to group state.
- *
+ * <p>
  * Stored in group_state_events table.
  * Replayed to clients during delta sync.
- *
+ * <p>
  * Event types:
  *   group_created       - first event, payload has initial group state
  *   member_added        - someone was added to the group

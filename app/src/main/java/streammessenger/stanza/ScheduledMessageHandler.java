@@ -351,22 +351,22 @@ public final class ScheduledMessageHandler implements StanzaHandler {
      */
     private void loadPendingFromDatabase() {
         String sql = """
-            SELECT
-                message_id::text,
-                from_jid,
-                to_jid,
-                message_type,
-                encrypted_content,
-                iv,
-                media_storage_key,
-                mime_type,
-                file_size_bytes,
-                scheduled_for
-            FROM scheduled_messages
-            WHERE sent_at IS NULL
-              AND cancelled_at IS NULL
-              AND scheduled_for > NOW()
-            """;
+    SELECT
+        CAST(message_id AS CHAR) AS message_id,
+        from_jid,
+        to_jid,
+        message_type,
+        encrypted_content,
+        iv,
+        media_storage_key,
+        mime_type,
+        file_size_bytes,
+        scheduled_for
+    FROM scheduled_messages
+    WHERE sent_at IS NULL
+      AND cancelled_at IS NULL
+      AND scheduled_for > NOW()
+    """;
 
         try (Connection conn = pool.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql);

@@ -1,10 +1,15 @@
 package streammessenger.muc.service;
 
-import com.xmpp.muc.exception.MucException;
-import com.xmpp.muc.model.*;
-import com.xmpp.muc.repository.GroupRepository;
 
+import java.util.List;
 import java.util.logging.Logger;
+
+import streammessenger.muc.exceptions.MucException;
+import streammessenger.muc.model.Affiliation;
+import streammessenger.muc.model.GroupRoom;
+import streammessenger.muc.model.Occupant;
+import streammessenger.muc.repository.GroupRepository;
+import streammessenger.signal.SenderKeyManager;
 
 public final class MembershipService {
 
@@ -15,21 +20,82 @@ public final class MembershipService {
     private final GroupRegistry registry;
     private final FanoutService fanoutService;
     private final PresenceBroadcaster presenceBroadcaster;
+    private final SenderKeyManager senderKeyManager;
 
     public MembershipService(GroupRepository repository,
                               GroupRegistry registry,
                               FanoutService fanoutService,
-                              PresenceBroadcaster presenceBroadcaster) {
+                              PresenceBroadcaster presenceBroadcaster, SenderKeyManager senderKeyManager) {
         this.repository          = repository;
         this.registry            = registry;
         this.fanoutService       = fanoutService;
         this.presenceBroadcaster = presenceBroadcaster;
+        this.senderKeyManager = senderKeyManager;
+    }
+
+    // =========================================================================
+    // Add member via link
+    // =========================================================================
+
+    public void addMemberViaLink(String groupId, String newMemberUserId, String newMemberJid, Affiliation affiliation) {
+        logger.info("Adding a member via link");
+        GroupRoom room = registry.getOrLoad(groupId);
+        if (room == null) {
+            throw new MucException(MucException.Code.GROUP_NOT_FOUND,
+                    "Group not found");
+        }
+
+        // Authorization
+
+        /* TODO: Check if the group can be joined via link
+            if (room.getSettings().onlyAdminsCanAdd()
+                && !actor.affiliation().canModerate()) {
+            throw new MucException(MucException.Code.NOT_AUTHORIZED,
+                    "Only admins can add members");
+        }*/
+
+
+        // Already member?
+        GroupRepository.MemberRecord existing = repository.getMember(groupId, newMemberUserId);
+        if (existing != null
+                && existing.affiliation() != Affiliation.OUTCAST) {
+            throw new MucException(MucException.Code.ALREADY_MEMBER,
+                    "User already a member");
+        }
+        if (existing != null
+                && existing.affiliation() == Affiliation.OUTCAST) {
+            throw new MucException(MucException.Code.BANNED,
+                    "User is banned from this group");
+        }
+
+        // Capacity check
+        if (room.getMemberCount() >= room.getMaxMembers()) {
+            throw new MucException(MucException.Code.ROOM_FULL,
+                    "Group at maximum capacity");
+        }
+
+        boolean added = repository.addMemberJoinViaLink(groupId, newMemberUserId, newMemberJid, affiliation);
+
+        if (added) {
+            room.incrementMemberCount();
+            List<GroupRepository.MemberRecord> members = repository.listMembers(groupId, 500, 0);
+            fanoutService.broadcastMemberAddedToGroup(room, newMemberUserId, newMemberJid, members);
+            logger.info("Member added via link successfully");
+        }
     }
 
     // =========================================================================
     // Add member
     // =========================================================================
 
+    /**
+     * Handle a new member registration
+     * @param groupId The groupId
+     * @param actorUserId The creator of the link
+     * @param newMemberUserId
+     * @param newMemberJid
+     * @param affiliation
+     */
     public void addMember(String groupId, String actorUserId,
                            String newMemberUserId, String newMemberJid,
                            Affiliation affiliation) {
@@ -40,8 +106,7 @@ public final class MembershipService {
         }
 
         // Authorization
-        GroupRepository.MemberRecord actor =
-                repository.getMember(groupId, actorUserId);
+        GroupRepository.MemberRecord actor = repository.getMember(groupId, actorUserId);
         if (actor == null) {
             throw new MucException(MucException.Code.NOT_MEMBER,
                     "Actor not a member");
@@ -86,8 +151,11 @@ public final class MembershipService {
             room.incrementMemberCount();
             fanoutService.broadcastMemberAdded(room,
                     newMemberUserId, newMemberJid, affiliation);
+
+            senderKeyManager.onMemberAdded(groupId, newMemberJid);
         }
     }
+
 
     // =========================================================================
     // Remove member
@@ -152,6 +220,9 @@ public final class MembershipService {
 
             fanoutService.broadcastMemberRemoved(room,
                     targetUserId, target.userJid(), actorUserId, reason);
+
+            senderKeyManager.onMemberRemoved(groupId, target.userJid());
+
         }
     }
 
@@ -215,6 +286,13 @@ public final class MembershipService {
 
         fanoutService.broadcastAffiliationChange(room, targetUserId,
                 target.userJid(), newAffiliation);
+
+        // when promoting to/from OUTCAST:
+        if (target.affiliation() == Affiliation.OUTCAST
+                || newAffiliation == Affiliation.OUTCAST) {
+            senderKeyManager.onSecurityRelevantChange(
+                    groupId, "affiliation_changed_outcast");
+        }
     }
 
     // =========================================================================

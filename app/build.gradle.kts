@@ -34,6 +34,10 @@ dependencies {
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
     implementation("org.mindrot:jbcrypt:0.4")
     implementation("com.googlecode.json-simple:json-simple:1.1.1")
+
+    implementation("com.cloudinary:cloudinary-http5:2.3.2")
+    //implementation("io.github.f4b6a3:ulid-creator:5.2.3")
+    implementation("com.github.f4b6a3:ulid-creator:5.2.4")
 }
 
 java {

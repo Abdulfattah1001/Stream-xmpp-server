@@ -1,4 +1,4 @@
-package streammessenger.muc;
+package streammessenger.muc1;
 
 /**
  * MUC status codes (XEP-0045 §17.3). We model only the ones we emit/consume.

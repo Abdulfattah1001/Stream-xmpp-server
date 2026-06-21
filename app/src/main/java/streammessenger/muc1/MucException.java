@@ -1,4 +1,4 @@
-package streammessenger.muc;
+package streammessenger.muc1;
 /* transport layer can render a spec-correct {@code <error/>} element.
  */
 public final class MucException extends Exception {

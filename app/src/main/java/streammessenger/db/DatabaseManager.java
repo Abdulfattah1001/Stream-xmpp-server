@@ -10,7 +10,12 @@ import java.util.List;
 import java.util.Optional;
 import java.util.logging.Logger;
 
+import javax.swing.text.html.Option;
+
+import streammessenger.api.GroupController;
+import streammessenger.group.repository.GroupRepository;
 import streammessenger.roster.RosterItem;
+import streammessenger.stanza.PrivacyHandler;
 
 public final class DatabaseManager {
 
@@ -35,18 +40,18 @@ public final class DatabaseManager {
 
     /**
      * Generates a unique opaque user ID.
-     *
+     * <p>
      * Format: u_ + 8 random hex chars
      * Example: u_7f3a9b2c
-     *
+     * <p>
      * 8 hex chars = 4 bytes = 32 bits of randomness
      * = 4,294,967,296 possible values
-     *
+     * <p>
      * We check for collisions and retry if needed.
      * At 10 million users the collision probability per generation
      * is still only 0.23% so retry is rarely needed.
-     *
-     * If you want more entropy (recommended for large scale):
+     * <p>
+     * If later want more entropy (recommended for large scale):
      *   Change new byte[4] to new byte[8] for 16 hex chars
      */
     private String generateUserId() throws SQLException {
@@ -70,8 +75,7 @@ public final class DatabaseManager {
             }
 
             attempts++;
-            logger.warning("user_id collision on attempt "
-                    + attempts + ": " + candidate);
+            logger.warning("user_id collision on attempt " + attempts + ": " + candidate);
         }
 
         throw new SQLException(
@@ -100,7 +104,7 @@ public final class DatabaseManager {
 
     /**
      * Registers a new user after Firebase OTP verification.
-     *
+     * <p>
      * Called ONLY during sign up.
      * If the firebase_uid already exists (user re-registering),
      * we return the existing user record instead of creating a duplicate.
@@ -110,7 +114,7 @@ public final class DatabaseManager {
      * @param displayName   Optional display name chosen by user
      * @return The user record (new or existing)
      */
-    public UserRecord registerUser(String firebaseUid,
+    public UserRecord registerUserPostgresSQL(String firebaseUid,
                                     String phoneNumber,
                                     String displayName) throws SQLException {
 
@@ -144,7 +148,7 @@ public final class DatabaseManager {
         }
 
         // Truly new user - generate ID and create record
-        String userId      = generateUserId();
+        String userId      = generateUserId(); //Server generated uid different from firebase uid
         String jid         = userId + "@" + xmppDomain;
         String phoneHash   = hashPhone(phoneNumber);
         String encryptedPhone = encryptPhone(phoneNumber);
@@ -190,9 +194,96 @@ public final class DatabaseManager {
                         rs.getString("user_id"),
                         rs.getString("jid"),
                         rs.getString("display_name"),
+                        "",
                         rs.getBoolean("active")
                 );
             }
+        }
+    }
+
+    public UserRecord registerUser(String firebaseUid,
+                                   String phoneNumber,
+                                   String displayName) throws SQLException {
+
+        UserRecord existing = getUserByFirebaseUid(firebaseUid);
+        if (existing != null) {
+            logger.info("Re-registration for existing user: " + existing.userId());
+
+            if (displayName != null
+                    && !displayName.equals(existing.displayName())) {
+                updateDisplayName(existing.userId(), displayName);
+            }
+
+            return existing;
+        }
+
+        UserRecord byPhone = getUserByPhoneHash(hashPhone(phoneNumber));
+        if (byPhone != null) {
+            logger.warning("Phone number already registered: "
+                    + "existing userId=" + byPhone.userId()
+                    + " new firebaseUid=" + firebaseUid);
+
+            updateFirebaseUid(byPhone.userId(), firebaseUid);
+            return byPhone;
+        }
+
+        String userId      = generateUserId();
+        String jid         = userId + "@" + xmppDomain;
+        String phoneHash   = hashPhone(phoneNumber);
+        String encryptedPhone = encryptPhone(phoneNumber);
+
+        String sql = """
+        INSERT INTO users (
+            user_id,
+            firebase_uid,
+            phone_number,
+            phone_number_hash,
+            jid,
+            display_name,
+            active,
+            phone_verified,
+            created_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, true, true, NOW(), NOW())
+        """;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(
+                     sql, Statement.RETURN_GENERATED_KEYS)) {
+
+            stmt.setString(1, userId);
+            stmt.setString(2, firebaseUid);
+            stmt.setString(3, encryptedPhone);
+            stmt.setString(4, phoneHash);
+            stmt.setString(5, jid);
+            stmt.setString(6, displayName);
+
+            int affected = stmt.executeUpdate();
+            if (affected == 0) {
+                throw new SQLException("INSERT failed, no rows affected");
+            }
+
+            long id;
+            try (ResultSet keys = stmt.getGeneratedKeys()) {
+                if (!keys.next()) {
+                    throw new SQLException("No ID obtained");
+                }
+                id = keys.getLong(1);
+            }
+
+            conn.commit();
+
+            logger.info("New user registered: userId=" + userId
+                    + " jid=" + jid);
+
+            return new UserRecord(
+                    id,
+                    userId,
+                    jid,
+                    displayName,
+                    "",
+                    true
+            );
         }
     }
 
@@ -251,6 +342,60 @@ public final class DatabaseManager {
         }
     }
 
+    public Optional<String> getUserContactFirebaseId(String uid){
+        String sql = """
+            SELECT user_id
+            FROM users
+            WHERE firebase_uid = ?
+            """;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, uid);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (!rs.next()) {
+                    logger.fine("Auth: unknown user=" + uid);
+                    return Optional.empty();
+                }
+
+                return Optional.of(rs.getString("user_id"));
+            }
+
+        } catch (SQLException e) {
+            logger.severe("DB error during authentication: " + e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    public Optional<String> getUserFirebaseIdByContact(String uid){
+        String sql = """
+            SELECT firebase_uid
+            FROM users
+            WHERE user_id = ?
+            """;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, uid);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (!rs.next()) {
+                    logger.fine("Auth: unknown user=" + uid);
+                    return Optional.empty();
+                }
+
+                return Optional.of(rs.getString("firebase_uid"));
+            }
+
+        } catch (SQLException e) {
+            logger.severe("DB error during authentication: " + e.getMessage());
+            return Optional.empty();
+        }
+    }
+
     public UserRecord getUserByUserId(String userId) {
         String sql = """
             SELECT id, user_id, jid, display_name, active
@@ -273,6 +418,50 @@ public final class DatabaseManager {
             logger.severe("getUserByUserId error: " + e.getMessage());
             return null;
         }
+    }
+
+    public void updateUserLastSeen(String userId){
+        logger.info("Updating the user last seen: "+userId);
+        String sql = "UPDATE users SET last_seen = UTC_TIMESTAMP() WHERE user_id = ?";
+
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, userId);
+            stmt.executeUpdate();
+            conn.commit();
+
+        } catch (SQLException e) {
+            logger.warning("updateUserLastSeen error: " + e.getMessage());
+        }
+    }
+
+    public Optional<String> getUserLastSeen(String userId) {
+        String sql = "SELECT last_seen FROM users WHERE user_id = ?";
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, userId);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+
+                if (rs.next()) {
+
+                    Timestamp timestamp = rs.getTimestamp("last_seen");
+
+                    if (timestamp != null) {
+                        return Optional.of(timestamp.toInstant().toString());
+                    }
+                }
+            }
+
+        } catch (SQLException e) {
+            logger.warning("getUserLastSeen error: " + e.getMessage());
+        }
+
+        return Optional.empty();
     }
 
     private UserRecord getUserByPhoneHash(String phoneHash) {
@@ -302,7 +491,7 @@ public final class DatabaseManager {
     public boolean contactExists(String jid) {
         String sql = """
             SELECT 1 FROM users
-            WHERE jid = ?
+            WHERE user_id = ?
               AND active = true
               AND deleted_at IS NULL
             """;
@@ -321,6 +510,146 @@ public final class DatabaseManager {
         }
     }
 
+    //=====================================================
+    //              GROUP UTILS
+    //=====================================================
+
+    public Optional<GroupController.ChatGroup> getGroup(String groupId){
+        return Optional.empty();
+    }
+
+    public boolean isGroupAdmin(String groupId, String userId){
+        return false;
+    }
+
+    public boolean persistGroupPresence(String fromId, String toId, String affilitation,
+                                        String jid, String role, boolean selfStatus){
+        String sql= """
+                INSERT INTO group_presence VALUES(?,?,?,?,?,?)
+                """;
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setString(1, fromId);
+            stmt.setString(2, toId);
+            stmt.setString(3, affilitation);
+            stmt.setString(4, jid);
+            stmt.setString(5, role);
+            stmt.setBoolean(6, selfStatus);
+
+            int res = stmt.executeUpdate();
+
+            return true;
+        }catch (SQLException exception){
+            logger.info("persistGroupPresence error: "+exception.getMessage());
+            return false;
+        }
+    }
+
+
+    public boolean isTokenExist(String token){
+        String sql = """
+                SELECT * FROM invite_links WHERE token = ? LIMIT 1
+                """;
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setString(1, token);
+
+            ResultSet resultSet = stmt.executeQuery();
+            return resultSet.next();
+        }catch (SQLException exception){
+            logger.info("Error isTokenExists " + exception.getMessage());
+        }
+        return false;
+    }
+
+    public Optional<GroupController.ChatGroup> getGroupByToken(String token){
+        String sql = """
+                SELECT group_id FROM invite_links WHERE token = ? AND active = true
+                """;
+        String groupSql = "SELECT * FROM chat_groups WHERE group_id = ?";
+
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setString(1, token);
+
+            ResultSet resultSet = stmt.executeQuery();
+
+            PreparedStatement groupStmt = connection.prepareStatement(groupSql);
+            groupStmt.setString(1, resultSet.getString("group_id"));
+
+        }catch (SQLException exception){
+            logger.info("Error getGroupByToken " + exception.getMessage());
+        }
+
+        return Optional.empty();
+    }
+
+    public boolean isMember(String groupId, String userId){
+        String sql = "SELECT * FROM group_members WHERE group_id = ? AND user_id = ?";
+
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setString(1, groupId);
+            stmt.setString(2, userId);
+
+            ResultSet resultSet = stmt.executeQuery();
+
+            return resultSet.next();
+
+        }catch(SQLException exception){
+            logger.info("Error isMember " + exception.getMessage());
+        }
+        return false;
+    }
+
+
+    public void addMemberIfAbsent(String groupId, String userId) {
+        String sql = """
+                INSERT INTO group_members (group_id, user_id) VALUES(?,?)
+                """;
+
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setString(1, groupId);
+            stmt.setString(2, userId);
+
+            int result = stmt.executeUpdate();
+
+        }catch (SQLException exception){
+            logger.info("Error addMemberIfAbsent " + exception.getMessage());
+        }
+    }
+
+    public void disableInviteToken(String groupID){
+        String sql = """
+                UPDATE TABLE invite_links SET active = false WHERE groupId = ?
+                """;
+
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setString(1, groupID);
+            int result = stmt.executeUpdate();
+        }catch (SQLException exception){
+            logger.info("Error disabling the invite token " + exception.getMessage());
+        }
+    }
+
+    public void updateGroupLink(String groupId, String creatorId, String token, boolean active){
+        String sql = """
+                INSERT INTO invite_links
+                (group_id, token, active, created_by, max_uses)
+                VALUES (?,?,?,?,?)
+                """;
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setString(1, groupId);
+            stmt.setString(2, token);
+            stmt.setBoolean(3, active);
+            stmt.setString(4, creatorId);
+
+            int result = stmt.executeUpdate();
+        }catch(SQLException exception){}
+    }
     // =========================================================================
     // Session Tokens
     // =========================================================================
@@ -328,7 +657,7 @@ public final class DatabaseManager {
     /**
      * Stores a new session token in the database.
      * Token is stored as SHA-256 hash - raw token never hits the DB.
-     *
+     * <p>
      * expires_at is set to NULL intentionally.
      * Tokens do not expire on their own.
      * They are only invalidated by explicit revocation.
@@ -341,20 +670,21 @@ public final class DatabaseManager {
                                    String appVersion,
                                    Instant expiresAt, // ignored - kept for API compat
                                    String ipAddress) {
+
         String sql = """
-            INSERT INTO session_tokens (
-                user_id,
-                token_hash,
-                device_label,
-                push_token,
-                platform,
-                app_version,
-                expires_at,
-                created_from_ip,
-                created_at,
-                last_used_at
-            ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?::inet, NOW(), NOW())
-            """;
+                INSERT INTO session_tokens (
+                    user_id,
+                    token_hash,
+                    device_label,
+                    push_token,
+                    platform,
+                    app_version,
+                    expires_at,
+                    created_from_ip,
+                    created_at,
+                    last_used_at
+                ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NOW(), NOW());
+                """;
         // expires_at = NULL means "never expires until revoked"
 
         try (Connection conn = pool.getConnection();
@@ -491,8 +821,7 @@ public final class DatabaseManager {
             int rows = stmt.executeUpdate();
             conn.commit();
 
-            logger.info("Revoked " + rows
-                    + " session tokens for userId=" + userId);
+            logger.info("Revoked " + rows + " session tokens for userId=" + userId);
 
         } catch (SQLException e) {
             logger.severe("revokeAllSessionTokens error: " + e.getMessage());
@@ -560,6 +889,7 @@ public final class DatabaseManager {
     // =========================================================================
 
     public void updateLastSeen(String userId) {
+        logger.info("Updating last seen from virtual thread");
         String sql = """
             UPDATE users
             SET last_seen  = NOW(),
@@ -662,10 +992,19 @@ public final class DatabaseManager {
                                 String userId,
                                 String details,
                                 String ipAddress) {
-        String sql = """
+        /*String sql = """
             INSERT INTO audit_log (event_type, user_id, details, ip_address, created_at)
             VALUES (?, ?, ?::jsonb, ?::inet, NOW())
-            """;
+            """;*/
+        String sql = """
+    INSERT INTO audit_log (
+        event_type,
+        user_id,
+        details,
+        ip_address,
+        created_at
+    ) VALUES (?, ?, ?, ?, NOW())
+    """;
 
         try (Connection conn = pool.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
@@ -723,31 +1062,49 @@ public final class DatabaseManager {
         }
     }
 
+
     public List<OfflineMessage> fetchOfflineMessages(String contactJid) {
-        String sql = """
-            DELETE FROM offline_messages
-            WHERE to_jid = ?
-            RETURNING from_jid, stanza_xml, stanza_id, created_at
-            ORDER BY created_at ASC
-            """;
+        String selectSql = """
+        SELECT from_user_id, message_type, encrypted_content, message_id, created_at
+        FROM offline_messages
+        WHERE to_user_id = ?
+        ORDER BY created_at ASC
+    """;
+
+        String deleteSql = """
+        DELETE FROM offline_messages
+        WHERE to_user_id = ?
+    """;
 
         List<OfflineMessage> messages = new ArrayList<>();
 
-        try (Connection conn = pool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+        try (Connection conn = pool.getConnection()) {
 
-            stmt.setString(1, contactJid);
+            conn.setAutoCommit(false);
 
-            try (ResultSet rs = stmt.executeQuery()) {
-                while (rs.next()) {
-                    messages.add(new OfflineMessage(
-                            rs.getString("from_jid"),
-                            rs.getString("stanza_xml"),
-                            rs.getString("stanza_id"),
-                            rs.getTimestamp("created_at")
-                    ));
+            // 1. fetch
+            try (PreparedStatement stmt = conn.prepareStatement(selectSql)) {
+                stmt.setString(1, contactJid);
+
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        messages.add(new OfflineMessage(
+                                rs.getString("from_user_id"),
+                                rs.getString("encrypted_content"),
+                                rs.getString("message_type"),
+                                rs.getString("message_id"),
+                                rs.getTimestamp("created_at")
+                        ));
+                    }
                 }
             }
+
+            // 2. delete
+            try (PreparedStatement stmt = conn.prepareStatement(deleteSql)) {
+                stmt.setString(1, contactJid);
+                stmt.executeUpdate();
+            }
+
             conn.commit();
 
         } catch (SQLException e) {
@@ -758,27 +1115,45 @@ public final class DatabaseManager {
     }
 
     public List<RosterItem> getRosterItems(String ownerJid) {
+        String sqlOld = """
+                SELECT
+                    u.jid AS contact_jid,
+                    ri.nickname AS name,
+                    ri.subscription,
+                    ri.ask,
+                    COALESCE(
+                        JSON_ARRAYAGG(rg.group_name ORDER BY rg.group_name),
+                        JSON_ARRAY()
+                    ) AS groups
+                FROM roster_items ri
+                INNER JOIN users owner ON owner.jid = ?
+                LEFT JOIN users u ON u.user_id = ri.contact_user_id
+                LEFT JOIN roster_groups rg ON rg.roster_item_id = ri.id
+                WHERE ri.owner_user_id = owner.user_id
+                  AND ri.blocked = false
+                GROUP BY
+                    u.jid,
+                    ri.nickname,
+                    ri.subscription,
+                    ri.ask
+                ORDER BY u.jid;
+                """;
+
         String sql = """
-            SELECT
-                u.jid           AS contact_jid,
-                ri.nickname     AS name,
-                ri.subscription,
-                ri.ask,
-                COALESCE(
-                    ARRAY_AGG(rg.group_name ORDER BY rg.group_name)
-                    FILTER (WHERE rg.group_name IS NOT NULL),
-                    '{}'
-                ) AS groups
-            FROM roster_items ri
-            INNER JOIN users owner ON owner.jid = ?
-            LEFT  JOIN users u     ON u.user_id = ri.contact_user_id
-            LEFT  JOIN roster_groups rg ON rg.roster_item_id = ri.id
-            WHERE ri.owner_user_id = owner.user_id
-              AND ri.blocked = false
-            GROUP BY u.jid, ri.nickname,
-                     ri.subscription, ri.ask
-            ORDER BY u.jid
-            """;
+                SELECT
+                    u.jid AS contact_jid,
+                    ri.nickname AS name,
+                    ri.subscription,
+                    ri.ask
+                FROM roster_items ri
+                JOIN users owner
+                    ON owner.user_id = ri.owner_user_id
+                LEFT JOIN users u
+                    ON u.user_id = ri.contact_user_id
+                WHERE owner.jid = ?
+                  AND ri.blocked = FALSE
+                ORDER BY u.jid;
+                """;
 
         List<RosterItem> items = new ArrayList<>();
 
@@ -973,7 +1348,7 @@ public final class DatabaseManager {
 
         List<PendingSubscription> result = new ArrayList<>();
 
-        try (Connection conn = pool.getConnection();
+        /*try (Connection conn = pool.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
 
             stmt.setString(1, toJid);
@@ -991,7 +1366,7 @@ public final class DatabaseManager {
 
         } catch (SQLException e) {
             logger.severe("fetchPendingSubscriptions error: " + e.getMessage());
-        }
+        }*/
 
         return result;
     }
@@ -1021,6 +1396,92 @@ public final class DatabaseManager {
     public void extendSessionToken(String tokenHash, Instant newExpiry) {
         // No-op - tokens don't expire
         // Kept for interface compatibility
+    }
+
+    public Optional<PrivacyHandler.Privacy> getPrivacy(String userId){
+        String sql = "SELECT * FROM user_privacy WHERE user_id = ?";
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, userId);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (!rs.next()) return Optional.empty();
+                return Optional.of(new PrivacyHandler.Privacy(
+                        rs.getString("last_seen_visibility"),
+                        rs.getString("photo_visibility"),
+                        rs.getString("about_visibility"),
+                        rs.getBoolean("read_receipts_enabled")
+                ));
+            }
+
+        } catch (SQLException e) {
+            logger.severe("getRosterItem error: " + e.getMessage());
+            return null;
+        }
+    }
+
+    public boolean insertPrivacy(String userId, PrivacyHandler.Privacy privacy){
+        String sql = """
+            INSERT INTO user_privacy
+                (user_id, last_seen_visibility, photo_visibility,
+                 about_visibility, read_receipts_enabled) VALUES(?, ?, ?, ?, ?)
+            """;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, userId);
+            stmt.setString(2, privacy.lastSeenVisibility());
+            stmt.setString(3, privacy.photoVisibility());
+            stmt.setString(4, privacy.aboutVisibility());
+            stmt.setBoolean(5, privacy.readReceiptsEnabled());
+            conn.commit();
+            return true;
+
+        } catch (SQLException e) {
+            logger.severe("insertPrivacy error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean upsertPrivacy(String userId, PrivacyHandler.Privacy privacy) {
+
+        String sql = """
+        INSERT INTO user_privacy (
+            user_id,
+            last_seen_visibility,
+            photo_visibility,
+            about_visibility,
+            read_receipts_enabled
+        )
+        VALUES (?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            last_seen_visibility  = VALUES(last_seen_visibility),
+            photo_visibility      = VALUES(photo_visibility),
+            about_visibility      = VALUES(about_visibility),
+            read_receipts_enabled = VALUES(read_receipts_enabled),
+            updated_at            = NOW()
+        """;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, userId);
+            stmt.setString(2, privacy.lastSeenVisibility());
+            stmt.setString(3, privacy.photoVisibility());
+            stmt.setString(4, privacy.aboutVisibility());
+            stmt.setBoolean(5, privacy.readReceiptsEnabled());
+
+            stmt.executeUpdate();
+            conn.commit();
+
+            return true;
+
+        } catch (SQLException e) {
+            logger.severe("upsertPrivacy error: " + e.getMessage());
+            return false;
+        }
     }
 
     // =========================================================================
@@ -1054,10 +1515,10 @@ public final class DatabaseManager {
 
     /**
      * Encrypts a phone number for storage.
-     *
+     * <p>
      * In production: use AES-256-GCM with a key from
      * an HSM or KMS (AWS KMS, Google Cloud KMS).
-     *
+     * <p>
      * Here: simplified placeholder - replace with real encryption.
      * The phone hash is used for lookups, the encrypted value
      * is only decrypted when absolutely necessary (account recovery).
@@ -1081,6 +1542,7 @@ public final class DatabaseManager {
                 rs.getString("user_id"),
                 rs.getString("jid"),
                 rs.getString("display_name"),
+                "",
                 rs.getBoolean("active")
         );
     }
@@ -1090,18 +1552,19 @@ public final class DatabaseManager {
     // =========================================================================
 
     /**
-     * id       → PostgreSQL auto-incremented BIGSERIAL
-     *            Generated by Postgres, never by your code
+     * id       → MySQL auto-incremented BIGSERIAL
+     *            Generated by Postgres, never by the code
      *            Used only for internal DB joins
-     *
+     * <p>
      * user_id  → "u_7f3a9b2c" generated by generateUserId()
      *            Used externally in JIDs, API responses, etc.
      */
     public record UserRecord(
             long id,           // BIGSERIAL from Postgres - auto generated
             String userId,     // "u_7f3a9b2c" - generated by generateUserId()
-            String jid,        // "u_7f3a9b2c@yourdomain.com"
+            String jid,        // "u_7f3a9b2c@domain.com"
             String displayName,
+            String avatarUrl,
             boolean active
     ) {}
 
@@ -1117,7 +1580,8 @@ public final class DatabaseManager {
     public record OfflineMessage(
             String fromJid,
             String body,
-            String stanzaId,
+            String messageType,
+            String messageId,
             Timestamp createdAt
     ) {}
 
@@ -1414,7 +1878,7 @@ public final class DatabaseManager {
 
     /**
      * Stores an encrypted offline message.
-     *
+     * <p>
      * The server stores CIPHERTEXT only.
      * It never sees the plaintext content.
      *
@@ -1441,37 +1905,128 @@ public final class DatabaseManager {
                                          long fileSizeBytes,
                                          String replyToId) {
         String sql = """
-            INSERT INTO messages (
-                message_id,
-                from_user_id,
-                to_user_id,
-                message_type,
-                encrypted_content,
-                iv,
-                media_storage_key,
-                encrypted_metadata,
-                mime_type,
-                file_size_bytes,
-                reply_to_message_id,
-                status,
-                was_offline,
-                created_at,
-                expires_at
-            )
-            SELECT
-                ?::uuid,
-                f.user_id,
-                t.user_id,
-                ?, ?, ?, ?, ?, ?, ?, ?::uuid,
-                'pending',
-                true,
-                NOW(),
-                NOW() + INTERVAL '30 days'
-            FROM users f
-            CROSS JOIN users t
-            WHERE f.jid = ?
-              AND t.jid = ?
-            """;
+                INSERT INTO offline_messages (
+                    message_id,
+                    from_user_id,
+                    to_user_id,
+                    message_type,
+                    encrypted_content,
+                    iv,
+                    media_storage_key,
+                    encrypted_metadata,
+                    mime_type,
+                    file_size_bytes,
+                    reply_to_message_id,
+                    status,
+                    was_offline,
+                    created_at,
+                    expires_at
+                )
+                SELECT
+                    ?,
+                    f.user_id,
+                    t.user_id,
+                    ?, ?, ?, ?, ?, ?, ?, ?,
+                    'pending',
+                    true,
+                    NOW(),
+                    NOW() + INTERVAL 30 DAY
+                FROM users f
+                JOIN users t
+                WHERE f.user_id = ?
+                  AND t.user_id = ?
+                """;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, messageId);
+            stmt.setString(2, messageType);
+            stmt.setString(3, encryptedContent);
+            stmt.setString(4, iv);
+            stmt.setString(5, mediaStorageKey);
+            stmt.setString(6, encryptedMetadata);
+            stmt.setString(7, mimeType);
+            stmt.setLong(8, fileSizeBytes);
+            stmt.setString(9, replyToId);
+            stmt.setString(10, fromJid);
+            stmt.setString(11, toJid);
+
+            int rows = stmt.executeUpdate();
+            conn.commit();
+            logger.info("Caching persisted");
+            return rows > 0;
+
+        } catch (SQLException e) {
+            logger.severe("storeEncryptedMessage error: " + e.getMessage());
+            return false;
+        }
+    }
+
+
+    /**
+     * Stores an encrypted offline message.
+     * <p>
+     * The server stores CIPHERTEXT only.
+     * It never sees the plaintext content.
+     *
+     * @param fromJid          Sender's full JID
+     * @param toJid            Recipient's bare JID
+     * @param messageId        Client-generated UUID for this message
+     * @param messageType      text | image | video | audio | file | location
+     * @param encryptedContent Base64 AES-256-GCM ciphertext
+     * @param iv               Base64 12-byte IV
+     * @param mediaStorageKey  Object storage path (null for text messages)
+     * @param mimeType         MIME type hint (null for text messages)
+     * @param fileSizeBytes    File size in bytes (0 for text messages)
+     * @param replyToId        UUID of message being replied to (null if none)
+     */
+    public boolean storeEncryptedMessageEventModel(String fromJid,
+                                         String toJid,
+                                         String messageId,
+                                         String messageType,
+                                         String encryptedContent,
+                                         String iv,
+                                         String mediaStorageKey,
+                                         String encryptedMetadata,
+                                         String mimeType,
+                                         long fileSizeBytes,
+                                         String replyToId) {
+        String sql = """
+                INSERT INTO events (
+                    event_id,
+                    event_category,
+                    event_type,
+                    group_id,
+                    sender_id,
+                    recipient_id,
+                    sender_jid,
+                    group_version,
+                    epoch,
+                    iv,
+                    encrypted_content,
+                    encrypted_metadata,
+                    reply_to_event_id,
+                    media_storage_key,
+                    mime_type,
+                    file_size_bytes,
+                    created_at,
+                    expires_at
+                )
+                SELECT
+                    ?,
+                    f.user_id,
+                    t.user_id,
+                    ?, ?, ?, ?, ?, ?, ?, ?,
+                    'pending',
+                    true,
+                    NOW(),
+                    NOW() + INTERVAL 30 DAY
+                FROM users f
+                JOIN users t
+                WHERE f.user_id = ?
+                  AND t.user_id = ?
+                """;
 
         try (Connection conn = pool.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
@@ -1497,15 +2052,60 @@ public final class DatabaseManager {
             return false;
         }
     }
+    public boolean storeSystemEvent(
+            String messageId,
+            String groupId,
+            String eventType,
+            String actorId,
+            String subjectId,
+            String to
+    ) {
+        String sql = """
+        INSERT INTO offline_messages (
+            message_id,
+            from_user_id,
+            to_user_id,
+            message_type,
+            system_event_type,
+            system_actor_id,
+            system_subject_id,
+            status,
+            was_offline,
+            created_at,
+            expires_at
+        )
+        VALUES (?, ?, ?, 'system', ?, ?, ?, 'pending', true, NOW(), NOW() + INTERVAL 30 DAY)
+    """;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, messageId);
+            stmt.setString(2, actorId);     // or group JID mapping
+            stmt.setString(3, groupId);
+            stmt.setString(4, eventType);
+            stmt.setString(5, actorId);
+            stmt.setString(6, subjectId);
+
+            //int rows = stmt.executeUpdate();
+            //conn.commit();
+            //return rows > 0;
+            return false;
+
+        } catch (SQLException e) {
+            logger.severe("storeSystemEvent error: " + e.getMessage());
+            return false;
+        }
+    }
 
     /**
      * Fetches and deletes all pending offline messages for a user.
-     *
+     * <p>
      * Uses DELETE ... RETURNING for atomic fetch-and-delete.
      * If server crashes after DELETE but before delivery:
      * messages are lost. XEP-0198 Stream Management handles this
      * at the XMPP layer (client will request retransmission).
-     *
+     * <p>
      * Messages are ordered by created_at ASC so older messages
      * are delivered first (correct chronological order).
      */
@@ -1513,13 +2113,13 @@ public final class DatabaseManager {
             String toJid) {
 
         String sql = """
-            DELETE FROM messages
+            DELETE FROM offline_messages
             WHERE to_user_id = (
                 SELECT user_id FROM users WHERE jid = ?
             )
             AND status = 'pending'
             RETURNING
-                message_id::text,
+                message_id,
                 (SELECT jid FROM users WHERE user_id = from_user_id) AS from_jid,
                 message_type,
                 encrypted_content,
@@ -1528,7 +2128,7 @@ public final class DatabaseManager {
                 encrypted_metadata,
                 mime_type,
                 file_size_bytes,
-                (SELECT message_id::text FROM messages m2
+                (SELECT message_id FROM messages m2
                  WHERE m2.id = messages.reply_to_message_id) AS reply_to_id,
                 created_at
             ORDER BY created_at ASC
@@ -1568,16 +2168,17 @@ public final class DatabaseManager {
         return messages;
     }
 
+
     /**
      * Marks a message as delivered.
      * Called when the recipient's session acknowledges receipt.
      */
     public void markMessageDelivered(String messageId) {
         String sql = """
-            UPDATE messages
+            UPDATE offline_messages
             SET status       = 'delivered',
                 delivered_at = NOW()
-            WHERE message_id::text = ?
+            WHERE message_id = ?
               AND status     = 'pending'
             """;
 
@@ -1599,10 +2200,10 @@ public final class DatabaseManager {
      */
     public void markMessageRead(String messageId) {
         String sql = """
-            UPDATE messages
+            UPDATE offline_messages
             SET status  = 'read',
                 read_at = NOW()
-            WHERE message_id::text = ?
+            WHERE message_id = ?
               AND status IN ('pending', 'delivered')
             """;
 
@@ -1616,6 +2217,212 @@ public final class DatabaseManager {
         } catch (SQLException e) {
             logger.warning("markMessageRead error: " + e.getMessage());
         }
+    }
+
+    // =========================================================================
+    // Offline Receipts Methods
+    // =========================================================================
+
+    public void storeReceipt(String from, String to, String id, String type){
+        logger.info("Persisting the receipt of type :"+type);
+        String sql = """
+                INSERT INTO pending_receipts (from_uid, to_uid, message_id, receipt_type) VALUES(
+                    ?, ?, ?, ?
+                )
+                """;
+
+        try(Connection conn = pool.getConnection()){
+            PreparedStatement stmt = conn.prepareStatement(sql);
+            stmt.setString(1, from);
+            stmt.setString(2, to);
+            stmt.setString(3, id);
+            stmt.setString(4, type);
+
+            stmt.executeUpdate();
+
+            conn.commit();
+        }catch (SQLException exception){
+            logger.info("storeReceipts error "+exception.getMessage());
+        }
+    }
+
+    public List<OfflineReceipt> getOfflineReceipt(String uid){
+        String selectSql = "SELECT * FROM pending_receipts WHERE to_uid = ?";
+        String deleteSql = "DELETE FROM pending_receipts WHERE to_uid = ?";
+
+        List<OfflineReceipt> receipts = new ArrayList<>();
+
+        try(Connection conn = pool.getConnection()){
+            conn.setAutoCommit(false);
+
+            try (PreparedStatement selectStmt = conn.prepareStatement(selectSql)) {
+                selectStmt.setString(1, uid);
+
+                try (ResultSet rs = selectStmt.executeQuery()) {
+                    while (rs.next()) {
+                        receipts.add(new OfflineReceipt(
+                                rs.getString("from_uid"),
+                                rs.getString("to_uid"),
+                                rs.getString("message_id"),
+                                rs.getString("receipt_type")
+                        ));
+                    }
+                }
+            }
+
+            try (PreparedStatement deleteStmt = conn.prepareStatement(deleteSql)) {
+                deleteStmt.setString(1, uid);
+                deleteStmt.executeUpdate();
+            }
+
+            conn.commit();
+
+        } catch(SQLException exception){
+            logger.info("getOfflineReceipt error " + exception.getMessage());
+        }
+
+        return receipts;
+    }
+
+
+    public record OfflineReceipt(
+            String fromUid,
+            String toUid,
+            String messageId,
+            String receiptType
+    ) {}
+
+
+    /**
+     * Fetches a single, perfectly sorted timeline delta for a user across all
+     * 1-to-1 chats and authorized group membership windows.
+     * * @param userId The ID of the connecting user (e.g., 'alice_id')
+     * @param clientLastSeenUlid The highest ULID string the client has stored locally
+     * @param limit The maximum number of timeline events to return in a single page
+     */
+    public List<GroupRepository.UnifiedTimelineItem> getUnifiedTimelineDelta(String userId, String clientLastSeenUlid, int limit) {
+        List<GroupRepository.UnifiedTimelineItem> timeline = new ArrayList<>();
+
+        String sqlOld = """
+            SELECT
+                e.event_id,
+                e.event_category,
+                e.event_type,
+                e.group_id,
+                e.sender_id,
+                e.sender_jid,
+                e.group_version,
+                e.epoch,
+                e.iv,
+                e.encrypted_content,
+                e.encrypted_metadata,
+                e.reply_to_event_id,
+                e.media_storage_key,
+                e.mime_type,
+                e.file_size_bytes,
+                e.created_at
+            FROM events e
+            LEFT JOIN group_members m
+              ON e.group_id = m.group_id AND m.user_id = ?
+            WHERE
+                -- Branch A: Direct private messages intended for this specific client
+                (e.event_category = 'chat' AND e.recipient_id = ? AND e.event_id > ?)
+                OR
+                -- Branch B: Group messages and events bound by historical residency windows
+                (e.event_category IN ('groupchat', 'system')
+                 AND m.user_id IS NOT NULL
+                 AND e.event_id > ?
+                 AND e.sender_id != ?
+                 AND e.event_id >= m.joined_at
+                 AND (m.left_at IS NULL OR e.event_id <= m.left_at))
+            ORDER BY e.event_id ASC
+            LIMIT ?;
+            """;
+
+        String sql = """
+                SELECT
+                    e.event_id,
+                    e.event_category,
+                    e.event_type,
+                    e.group_id,
+                    e.sender_id,
+                    e.sender_jid,
+                    e.group_version,
+                    e.epoch,
+                    e.encrypted_content,
+                    e.reply_to_event_id,
+                    e.created_at
+                FROM events e
+                LEFT JOIN group_members m
+                    ON e.group_id = m.group_id
+                   AND m.user_id = ?
+                WHERE
+                    (
+                        e.event_category = 'chat'
+                        AND e.recipient_id = ?
+                        AND e.event_id > ?
+                    )
+                    OR
+                    (
+                        e.event_category IN ('groupchat', 'system')
+                        AND m.user_id IS NOT NULL
+                        AND e.event_id > ?
+                        AND e.sender_id != ?
+                        AND e.created_at >= m.joined_at
+                        AND (
+                            m.left_at IS NULL
+                            OR e.created_at <= m.left_at
+                        )
+                    )
+                ORDER BY e.event_id ASC
+                LIMIT ?;
+                """;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            // Map the parameters cleanly to match the query indexes
+            //stmt.setString(1, userId);             // For the LEFT JOIN evaluation
+            //stmt.setString(2, userId);             // Branch A: recipient_id
+            //stmt.setString(3, clientLastSeenUlid); // Branch A: anchor
+            //stmt.setString(4, clientLastSeenUlid); // Branch B: anchor
+            //stmt.setString(5, userId); // Exclude the message that the current session sent
+            //stmt.setInt(6, limit);
+
+            stmt.setString(1, userId);             // LEFT JOIN
+            stmt.setString(2, userId);             // recipient_id
+            stmt.setString(3, clientLastSeenUlid); // chat anchor
+            stmt.setString(4, clientLastSeenUlid); // group anchor
+            stmt.setString(5, userId);             // exclude own messages
+            stmt.setInt(6, limit);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    timeline.add(mapRowToTimelineItem(rs));
+                }
+            }
+        } catch (SQLException e) {
+            logger.severe("Failed to pull unified timeline delta for user " + userId + ": " + e.getMessage());
+        }
+
+        return timeline;
+    }
+
+    private GroupRepository.UnifiedTimelineItem mapRowToTimelineItem(ResultSet rs) throws SQLException {
+        return new GroupRepository.UnifiedTimelineItem(
+                rs.getString("event_id"),
+                rs.getString("event_ref_id"),
+                rs.getString("event_category"),
+                rs.getString("event_type"),
+                rs.getString("group_id"),
+                rs.getString("sender_id"),
+                rs.getString("sender_jid"),
+                rs.getInt("group_version"),
+                rs.getInt("epoch"),
+                rs.getString("encrypted_content"),
+                rs.getString("reply_to_event_id"),
+                rs.getTimestamp("created_at")
+        );
     }
 
     // =========================================================================
@@ -1671,7 +2478,7 @@ public final class DatabaseManager {
     /**
      * Uploads a batch of one-time pre-keys for a user.
      * Called by the client periodically to replenish the key supply.
-     *
+     * <p>
      * One-time pre-keys are consumed one per new conversation.
      * When supply runs low (< 10 remaining), the client uploads more.
      */
@@ -1712,12 +2519,12 @@ public final class DatabaseManager {
 
     /**
      * Fetches a user's public keys for initiating an encrypted session.
-     *
+     * <p>
      * Returns:
      *   - Identity key (long-term, always the same)
      *   - Signed pre-key (rotated periodically)
      *   - One one-time pre-key (claimed and deleted from supply)
-     *
+     * <p>
      * The one-time pre-key provides forward secrecy:
      * even if long-term keys are compromised later,
      * past messages cannot be decrypted.
@@ -1838,7 +2645,7 @@ public final class DatabaseManager {
      * Retrieves the most recently used push token for a user.
      * Used by PushNotificationService to deliver notifications
      * when the user has multiple devices registered.
-     *
+     * <p>
      * Returns the most recent active device's push token since
      * that's likely the user's primary device.
      */

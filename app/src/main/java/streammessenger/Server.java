@@ -68,10 +68,10 @@ import streammessenger.vhost.VirtualHostManager;
  *   ├── SessionReaper         (idle session cleanup)
  *   └── ServerMetrics         (counters + gauges)
  */
-public class Server {
+public class ServerOld {
 
     private static final Logger logger =
-            Logger.getLogger(Server.class.getName());
+            Logger.getLogger(ServerOld.class.getName());
 
     private static final SecureRandom secureRandom = new SecureRandom();
 
@@ -113,6 +113,8 @@ public class Server {
     private final SessionReaper sessionReaper;
 
     private final AuthController authController;
+    private final SessionTokenService sessionTokenService;
+    private final FirebaseTokenVerifier firebaseTokenVerifier;
     private final PushNotificationService pushService;
     private final GroupManager groupManager;
     private final CallSignalingHandler callHandler;
@@ -148,13 +150,13 @@ public class Server {
     // Singleton
     // -------------------------------------------------------------------------
 
-    private static volatile Server instance = null;
+    private static volatile ServerOld instance = null;
 
     // =========================================================================
     // Constructor - private, use Builder
     // =========================================================================
 
-    private Server(Builder builder) throws IOException {
+    private ServerOld(Builder builder) throws IOException {
         this.PORT    = builder.port;
         this.address = builder.address;
         this.config  = builder.config;
@@ -166,6 +168,7 @@ public class Server {
 
         this.connectionPool = new ConnectionPool(config);
         this.db             = new DatabaseManager(connectionPool, "localhost");
+        this.sessionTokenService = new SessionTokenService(this.db);
 
         CarbonManager.initialize(connectionPool, registry);
         this.carbonManager = CarbonManager.getInstance();
@@ -176,17 +179,16 @@ public class Server {
         // Initialize multi-device message routing
         this.multiDeviceHandler = new MultiDeviceMessageHandler(registry, db);
 
+        this.firebaseTokenVerifier =  new FirebaseTokenVerifier(config.getFcmProjectId());
         try{
-            this.authController = new AuthController(3004, this.db,
-                    new FirebaseTokenVerifier("stream-6fa32"),
-                    new SessionTokenService(this.db));
+            this.authController = new AuthController(3004, this.db, firebaseTokenVerifier, sessionTokenService);
         } catch (IOException e) {
             throw new RuntimeException(e); //Intentional pass through
         }
 
         this.vhostManager  = new VirtualHostManager(registry);
         this.rosterManager = new RosterManager(db, registry);
-        this.authManager   = new AuthManager(db, registry, metrics);
+        this.authManager   = new AuthManager(db, registry, metrics, sessionTokenService, this.firebaseTokenVerifier);
         this.tlsUpgrader   = new TLSUpgrader(config);
 
         this.cleanupTask = new CleanupTask(connectionPool);
@@ -204,8 +206,7 @@ public class Server {
         );
 
         // Register primary domain from config
-        vhostManager.registerDomain(
-                extractPrimaryDomain(),
+        vhostManager.registerDomain(extractPrimaryDomain(),
                 new DomainConfig.Builder(extractPrimaryDomain())
                         .registrationOpen(false)
                         .federationEnabled(false)
@@ -264,7 +265,7 @@ public class Server {
     // Public API
     // =========================================================================
 
-    public static Server getInstance() {
+    public static ServerOld getInstance() {
         if (instance == null) {
             throw new IllegalStateException(
                     "Server not initialized. Call Server.Builder.build() first.");
@@ -567,9 +568,9 @@ public class Server {
         public String getAddress()   { return address; }
         public ServerConfig getConfig() { return config; }
 
-        public Server build() throws IOException {
+        public ServerOld build() throws IOException {
             if (instance == null) {
-                synchronized (Server.class) {
+                synchronized (ServerOld.class) {
                     if (instance == null) {
                         if (config == null) {
                             throw new IllegalStateException(
@@ -577,7 +578,7 @@ public class Server {
                                             "Call setConfig(ServerConfig.load(\"config.properties\"))."
                             );
                         }
-                        instance = new Server(this);
+                        instance = new ServerOld(this);
                     }
                 }
             }

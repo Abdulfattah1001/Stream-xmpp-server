@@ -54,7 +54,7 @@ public final class PresenceBroadcaster {
         logger.info("Broadcasting the join sequence:...");
         // 1. Send presence of all existing occupants to the new user
         Session newSession = sessionRegistry
-                .getByUid(newOccupant.sessionUid())
+                .getBySessionId(newOccupant.sessionUid())
                 .orElse(null);
 
         if (newSession != null) {
@@ -96,7 +96,7 @@ public final class PresenceBroadcaster {
                     false
             );
 
-            sessionRegistry.getByUid(existing.sessionUid())
+            sessionRegistry.getBySessionId(existing.sessionUid())
                     .ifPresent(s -> {
                         boolean sent = s.writeXML(presence);
                         if(!sent){
@@ -137,7 +137,7 @@ public final class PresenceBroadcaster {
 
         for (Occupant other : room.getOccupants()) {
             String personalized = String.format(stanza, other.userJid());
-            sessionRegistry.getByUid(other.sessionUid())
+            sessionRegistry.getBySessionId(other.sessionUid())
                     .ifPresent(s -> s.writeXML(personalized));
         }
     }
@@ -161,7 +161,7 @@ public final class PresenceBroadcaster {
 
         for (Occupant other : room.getOccupants()) {
             String personalized = String.format(stanza, other.userJid());
-            sessionRegistry.getByUid(other.sessionUid())
+            sessionRegistry.getBySessionId(other.sessionUid())
                     .ifPresent(s -> s.writeXML(personalized));
         }
     }

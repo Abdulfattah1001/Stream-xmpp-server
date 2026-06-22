@@ -352,7 +352,7 @@ public final class CarbonManager {
         for (String uid : userCarbons.keySet()) {
             if (uid.equals(excludeUid)) continue;
 
-            registry.getByUid(uid).ifPresent(session -> {
+            registry.getBySessionId(uid).ifPresent(session -> {
                 if (session.isAuthenticated()) {
                     result.add(session);
                 }

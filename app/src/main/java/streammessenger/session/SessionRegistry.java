@@ -111,9 +111,8 @@ public final class SessionRegistry {
     // Lookup
     // =========================================================================
 
-    //TODO: To be renamed to getBySessionId()
-    public Optional<Session> getByUid(String uid) {
-        return Optional.ofNullable(bySessionId.get(uid));
+    public Optional<Session> getBySessionId(String sessionId) {
+        return Optional.ofNullable(bySessionId.get(sessionId));
     }
 
     /**

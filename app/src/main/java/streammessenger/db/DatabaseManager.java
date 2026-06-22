@@ -1066,7 +1066,7 @@ public final class DatabaseManager {
 
     public List<OfflineMessage> fetchOfflineMessages(String contactJid) {
         String selectSql = """
-        SELECT from_user_id, message_type, encrypted_content, message_id, created_at
+        SELECT from_user_id, message_type, encrypted_content, message_id, created_at, type, group_id
         FROM offline_messages
         WHERE to_user_id = ?
         ORDER BY created_at ASC
@@ -1094,6 +1094,8 @@ public final class DatabaseManager {
                                 rs.getString("encrypted_content"),
                                 rs.getString("message_type"),
                                 rs.getString("message_id"),
+                                rs.getString("group_id"),
+                                rs.getString("type"),
                                 rs.getTimestamp("created_at")
                         ));
                     }
@@ -1584,6 +1586,8 @@ public final class DatabaseManager {
             String body,
             String messageType,
             String messageId,
+            String groupId,
+            String type,
             Timestamp createdAt
     ) {}
 
@@ -1877,6 +1881,86 @@ public final class DatabaseManager {
     // =========================================================================
     // Message Methods (updated for encryption)
     // =========================================================================
+
+
+    /**
+     * Stores an encrypted offline message.
+     * <p>
+     * The server stores CIPHERTEXT only.
+     * It never sees the plaintext content.
+     *
+     * @param fromJid          Sender's full JID
+     * @param toJid            Recipient's bare JID
+     * @param messageId        Client-generated UUID for this message
+     * @param messageType      text | image | video | audio | file | location
+     * @param encryptedContent Base64 AES-256-GCM ciphertext
+     * @param iv               Base64 12-byte IV
+     * @param mediaStorageKey  Object storage path (null for text messages)
+     * @param mimeType         MIME type hint (null for text messages)
+     * @param fileSizeBytes    File size in bytes (0 for text messages)
+     * @param replyToId        UUID of message being replied to (null if none)
+     */
+    public boolean storeGroupEncryptedMessage(
+            String groupId,
+                                        String senderId,
+                                         String memberId,
+                                         String messageId,
+                                         String messageType,
+                                         String encryptedContent,
+                                         String iv,
+                                         String mediaStorageKey,
+                                         String encryptedMetadata,
+                                         String mimeType,
+                                         long fileSizeBytes,
+                                         String replyToId) {
+        String sql = """
+                INSERT INTO offline_messages (
+                    message_id,
+                    group_id,
+                    from_user_id,
+                    to_user_id,
+                    message_type,
+                    encrypted_content,
+                    iv,
+                    media_storage_key,
+                    encrypted_metadata,
+                    mime_type,
+                    file_size_bytes,
+                    reply_to_message_id,
+                    status,
+                    was_offline,
+                    created_at,
+                    expires_at,
+                    type
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'pending',true, NOW(), NOW() + INTERVAL 30 DAY, ?)
+                """;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setString(1, messageId);
+            stmt.setString(2, groupId);
+            stmt.setString(3, senderId);
+            stmt.setString(4, memberId);
+            stmt.setString(5, messageType);
+            stmt.setString(6, encryptedContent);
+            stmt.setString(7, iv);
+            stmt.setString(8, mediaStorageKey);
+            stmt.setString(9, encryptedMetadata);
+            stmt.setString(10, mimeType);
+            stmt.setLong(11, fileSizeBytes);
+            stmt.setString(12, replyToId);
+            stmt.setString(13, "groupchat");
+
+            int rows = stmt.executeUpdate();
+            conn.commit();
+            return rows > 0;
+
+        } catch (SQLException e) {
+            logger.severe("storeEncryptedMessage error: " + e.getMessage());
+            return false;
+        }
+    }
 
     /**
      * Stores an encrypted offline message.

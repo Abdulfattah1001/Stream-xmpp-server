@@ -125,14 +125,12 @@ public final class GroupStanzaHandler implements StanzaHandler {
 
         String groupJid = bareJid(to);
         String groupId  = groupJid.substring(0, groupJid.indexOf('@'));
-        String userId   = extractUserId(session.getContactId());
 
         ParsedGroupMessage parsed = parseGroupMessage(reader);
-
         try {
             messageRouter.routeMessage(
                     groupId,
-                    userId,
+                    session.getUid(),
                     session.getContactId(),
                     messageId,
                     parsed.encryptedPayload(),

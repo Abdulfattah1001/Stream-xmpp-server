@@ -74,7 +74,7 @@ public final class FanoutService {
             // Submit each delivery to the thread pool
             fanoutExecutor.execute(() -> {
                 try {
-                    sessionRegistry.getByUid(occupant.sessionUid())
+                    sessionRegistry.getBySessionId(occupant.sessionUid())
                             .filter(Session::isAuthenticated)
                             .ifPresent(s -> s.writeXML(stanzaXml));
                 } catch (Exception e) {
@@ -232,7 +232,7 @@ public final class FanoutService {
         for (Occupant occupant : room.getOccupants()) {
             fanoutExecutor.execute(() -> {
                 try {
-                    sessionRegistry.getByUid(occupant.sessionUid())
+                    sessionRegistry.getBySessionId(occupant.sessionUid())
                             .filter(Session::isAuthenticated)
                             .ifPresent(s -> s.writeXML(stanza));
                 } catch (Exception e) {
@@ -249,7 +249,7 @@ public final class FanoutService {
         for (Occupant occupant : room.getOccupants()) {
             fanoutExecutor.execute(() -> {
                 try {
-                    sessionRegistry.getByUid(occupant.sessionUid())
+                    sessionRegistry.getBySessionId(occupant.sessionUid())
                             .filter(Session::isAuthenticated)
                             .ifPresent(s -> s.writeXML(stanza));
                 } catch (Exception e) {

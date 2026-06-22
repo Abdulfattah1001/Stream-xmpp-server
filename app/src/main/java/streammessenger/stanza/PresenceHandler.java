@@ -117,7 +117,7 @@ public final class PresenceHandler implements StanzaHandler {
         deliverPendingSubscriptions(session, contactId);
 
         // 2. Deliver offline messages
-        deliverOfflineMessages(session, contactId);
+        deliverOfflineMessages(session, session.getUid());
 
         // 3. Deliver offline receipts
         deliverOfflineReceipts(session, contactId);
@@ -147,42 +147,77 @@ public final class PresenceHandler implements StanzaHandler {
         for (DatabaseManager.OfflineMessage msg : messages) {
             // Format timestamp as XEP-0082 datetime string
             String timestamp = formatTimestamp(msg.createdAt());
+            String type = msg.type();
 
-
-            String stanza = String.format(
-                    "<message id='%s' from='%s' to='%s' type='chat'>" +
-                            "<encrypted xmlns='%s' msg_type='%s' iv=''>%s</encrypted>" +
-                            "<request xmlns='%s'/>" +
-                            "<delay xmlns='urn:xmpp:delay' from='%s' stamp='%s'/>" +
-                       "</message>",
-                    escapeXml(msg.messageId()),
-                    escapeXml(msg.fromJid()),
-                    escapeXml(contactId),
-                    E2EE_NS,
-                    escapeXml(msg.messageType()),
-                    escapeXml(msg.body()),
-                    RECEIPTS_NS,
-                    escapeXml(extractDomain(contactId)),
-                    timestamp
-            );
-            boolean sent = session.writeXML(stanza);
-
-            if(!sent){
-                db.storeEncryptedMessage(
-                        msg.fromJid(),
-                        contactId,
-                        msg.messageId(),
-                        "text",
-                        msg.body(),
-                        UUID.randomUUID().toString(),
-                        "",
-                        "",
-                        "",
-                        0,
-                        ""
+            if("chat".equals(type)){
+                String stanza = String.format(
+                        "<message id='%s' from='%s' to='%s' type='chat'>" +
+                                "<encrypted xmlns='%s' msg_type='%s' iv=''>%s</encrypted>" +
+                                "<request xmlns='%s'/>" +
+                                "<delay xmlns='urn:xmpp:delay' from='%s' stamp='%s'/>" +
+                                "</message>",
+                        escapeXml(msg.messageId()),
+                        escapeXml(msg.fromJid()),
+                        escapeXml(contactId),
+                        E2EE_NS,
+                        escapeXml(msg.messageType()),
+                        escapeXml(msg.body()),
+                        RECEIPTS_NS,
+                        escapeXml(extractDomain(contactId)),
+                        timestamp
                 );
-            }else{
-                logger.info("Offline message sent");
+                boolean sent = session.writeXML(stanza);
+
+                if(!sent){
+                    db.storeEncryptedMessage(
+                            msg.fromJid(),
+                            contactId,
+                            msg.messageId(),
+                            "text",
+                            msg.body(),
+                            UUID.randomUUID().toString(),
+                            "",
+                            "",
+                            "",
+                            0,
+                            ""
+                    );
+                }
+            }else {
+                String stanza = String.format(
+                        "<message id='%s' from='%s' to='%s' type='groupchat'>" +
+                                "<body xmlns='%s' msg_type='%s' iv=''>%s</body>" +
+                                "<request xmlns='%s'/>" +
+                                "<delay xmlns='urn:xmpp:delay' from='%s' stamp='%s'/>" +
+                                "</message>",
+                        escapeXml(msg.messageId()),
+                        escapeXml(msg.groupId()+"/"+msg.fromJid()),
+                        escapeXml(contactId),
+                        E2EE_NS,
+                        escapeXml(msg.messageType()),
+                        escapeXml(msg.body()),
+                        RECEIPTS_NS,
+                        escapeXml(extractDomain(contactId)),
+                        timestamp
+                );
+
+                boolean sent = session.writeXML(stanza);
+
+                if(!sent){
+                    db.storeEncryptedMessage(
+                            msg.fromJid(),
+                            contactId,
+                            msg.messageId(),
+                            "text",
+                            msg.body(),
+                            UUID.randomUUID().toString(),
+                            "",
+                            "",
+                            "",
+                            0,
+                            ""
+                    );
+                }
             }
         }
     }

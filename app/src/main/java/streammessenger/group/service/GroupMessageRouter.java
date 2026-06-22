@@ -63,7 +63,7 @@ public final class GroupMessageRouter {
                               String mediaStorageKey,
                               String mimeType,
                               long fileSizeBytes) {
-        logger.info("Routing message to group members");
+        logger.info("Routing message to group members: sender="+senderJid+" senderJid="+senderJid+" groupId="+groupId+" PAYLOAD: "+encryptedPayload);
 
         Group group = repository.get(groupId);
 
@@ -106,10 +106,8 @@ public final class GroupMessageRouter {
 
         // Get all member JIDs (except sender)
         List<String> recipientJids = repository.listMemberJids(groupId);
-        logger.info("Members size is: "+recipientJids.size());
 
         for (String recipientJid : recipientJids) {
-            logger.info("JID: "+recipientJid);
             // Skip the sender of the message
             if (recipientJid.equals(senderJid)) continue;
 
@@ -149,10 +147,10 @@ public final class GroupMessageRouter {
             }
 
             if (!delivered) {
-                logger.info("Saving for this user as offline");
                 // Offline - store for delivery on next connection
-                boolean stored = db.storeEncryptedMessage(
-                        senderJid, recipientJid, messageId,
+                boolean stored = db.storeGroupEncryptedMessage(
+                        groupId, senderJid.split("@")[0],
+                        recipientJid.split("@")[0], messageId,
                         messageType, encryptedPayload, iv,
                         mediaStorageKey, null, mimeType,
                         fileSizeBytes, null

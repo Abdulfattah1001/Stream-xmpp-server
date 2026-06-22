@@ -53,7 +53,7 @@ public final class AuthManager {
 
     /**
      * Authenticates an XMPP session using a session token.
-     *
+     * <p>
      * SASL PLAIN format: \0user_id\0session_token
      *   username = user_id    e.g. "u_7f3a9b2c"
      *   password = raw token  e.g. "st_abc123..."

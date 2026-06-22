@@ -26,6 +26,7 @@ import streammessenger.session.SessionState;
  * <p>
  * Stateless singleton - safe to share across all connections.
  */
+@SuppressWarnings("unused")
 public final class AuthManager {
 
     private static final Logger logger = Logger.getLogger(AuthManager.class.getName());
@@ -40,6 +41,7 @@ public final class AuthManager {
     private final SessionRegistry registry;
     private final ServerMetrics metrics;
     private final SessionTokenService sessionTokenService;
+
     private final FirebaseTokenVerifier tokenVerifier;
 
     // Track failed attempts per IP for rate limiting
@@ -211,18 +213,22 @@ public final class AuthManager {
 
         // 6. Auth succeeded
         clearFailures(clientIp);
-        logger.info("User authenticate succeed: "+validate.userId());
-        session.setContactId(validate.userId()+ "@localhost");
+        session.setContactId(validate.contactId());
         session.setSessionState(SessionState.AUTHENTICATED);
         session.touchActivity();
 
-        // Register in secondary index for message routing by contactId
-        registry.bindAuthenticatedSession(validate.userId(), session);
+        // Register in secondary index for message routing by userIds
+        registry.bindAuthenticatedSession(validate.contactId(), session);
         metrics.sessionAuthenticated();
 
-        logger.info("Authenticated: " + validate.userId()
-                + " sessionId=" + session.getSessionId()
-                + " ip=" + clientIp);
+        logger.info("Authenticated:" +
+                " ContactId="+session.getContactId() +  // _usevc@server_name.com
+                " userId="+session.getUid()+ // u_ckwbcib
+                " Jid="+session.getJid() + // u_cwuicwyv@server_name.com/resource_name
+                " sessionId="+session.getSessionId()+ // SessionID was set when accepting the session
+                " DeviceId="+session.getDeviceId()+ // Device ID needs to be fetched depending the token authenticated with
+                " Resource="+session.getResource() +  // Resource is still null at this point, no resource bound yet
+                " ip="+clientIp);
 
         // Update last_seen asynchronously so it doesn't delay <success/>
         Thread.ofVirtual().name("last-seen-" + validate.userId())
@@ -287,7 +293,7 @@ public final class AuthManager {
         try{
             decoded = Base64.getDecoder().decode(base64Payload.trim());
         }catch (IllegalArgumentException e){
-            throw new IllegalArgumentException("SASL PLAIN payload is not valid BASE 64 playlod");
+            throw new IllegalArgumentException("SASL PLAIN payload is not valid BASE 64 payload");
         }
 
         return new String(decoded);

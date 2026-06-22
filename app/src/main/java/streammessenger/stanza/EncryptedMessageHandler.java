@@ -91,14 +91,16 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                        XMLEventReader reader,
                        Session session) {
         if (!session.isAuthenticated()) {
-            logger.warning("Unauthenticated message from uid=" + session.getSessionId());
+            logger.info("Unauthenticated message from uid=" + session.getSessionId());
             consumeElement(reader);
             return;
         }
 
-        String id   = getAttr(element, "id"); // This should never be null for client callbacl
-        String to   = getAttr(element, "to");
+        String id   = getAttr(element, "id");
+        String to   = getAttr(element, "to") + "@localhost";  // u_qwicvu
         String type = getAttr(element, "type");
+
+        logger.info("To is: "+to);
 
         if (id == null) id = UUID.randomUUID().toString();
 
@@ -108,22 +110,28 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         }
 
         // Strip resource - route to bare JID
-        String toContactId = bareJid(to);
-        logger.info("contact is: "+toContactId);
+        String toContactId = bareJid(to); // assuming it comes in the format of u_wbcwvvc@server_name.com/mobile
         // Parse the message content
         ParsedMessage parsed = parseMessageContent(reader, id);
 
+        logger.info("Parsed message");
         // Update the last seen status of the sender
         session.touchActivity();
 
+        logger.info("after last activity");
+
         // Route based on content type
         if (parsed.isReceiptOnly()) {
+            logger.info("after last activity 1");
             // Delivery/read receipt - route directly
             routeReceipt(parsed, session, toContactId);
             return;
         }
 
+
+
         if (parsed.isChatStateOnly()) {
+            logger.info("after last activity chat state");
             // Typing indicator - route directly, never store
             routeChatState(parsed, session, toContactId, type);
             return;
@@ -132,7 +140,7 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         if (parsed.encryptedContent() == null && parsed.mediaUrl == null) {
             // No encrypted content and not a receipt/chat state
             // Reject - we require E2E encryption
-            logger.warning("Unencrypted message rejected from=" + session.getContactId());
+            logger.info("ERROR ENCRYPTED CONTENT");
             sendNotAcceptableError(session, id);
             consumeElement(reader);
             return;
@@ -153,7 +161,7 @@ public final class EncryptedMessageHandler implements StanzaHandler {
      */
     private void routeOrStoreMessage(ParsedMessage parsed,
                                      Session sender,
-                                     String toContactId, //u_
+                                     String toContactId,
                                      String type,
                                      String messageId) {
         // Build the full stanza XML to forward/store
@@ -165,24 +173,20 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         boolean delivered = false;
 
         // Try online delivery first
-        java.util.Optional<Session> recipientSession =
-                registry.getByContactId(toContactId);
+        java.util.Optional<Session> recipientSession = registry.getByContactId(toContactId);
 
-        if (recipientSession.isPresent()
-                && recipientSession.get().isAuthenticated()) {
+        if (recipientSession.isPresent() && recipientSession.get().isAuthenticated()) {
             delivered = recipientSession.get().writeXML(stanzaXml);
         }
 
         if (delivered) {
             metrics.messageSent();
-            //Updates should not be sent here
-            // Update message status to delivered
-            // TODO: uncomment db.markMessageDelivered(messageId);
         } else {
             // Recipient offline - store encrypted ciphertext
             if (db.contactExists(toContactId)) {
+
                 boolean store = db.storeEncryptedMessage(
-                        sender.getContactId(),
+                        sender.getUid(),
                         toContactId,
                         messageId,
                         parsed.msgType() != null ? parsed.msgType() : "text",
@@ -233,7 +237,6 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                 escapeXml(parsed.receiptId())
         );
 
-
         registry.getByContactId(toContactId).ifPresentOrElse(s -> {
             if (s.isAuthenticated()) {
                 boolean sent =  s.writeXML(receiptXml);
@@ -257,6 +260,7 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                     parsed.receiptType
             );
         });
+
     }
 
     /**
@@ -432,7 +436,6 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                     // Reply reference
                     else if ("reply-to".equals(name) && E2EE_NS.equals(ns)) {
                         replyToId = getAttr(child, "id");
-                        logger.info("Parsing reply-to: "+replyToId);
                     }
 
                     // Delivery receipt
@@ -443,7 +446,6 @@ public final class EncryptedMessageHandler implements StanzaHandler {
 
                     // Read receipt
                     else if ("displayed".equals(name) && RECEIPTS_NS.equals(ns)) {
-                        logger.info("DISPLAYED OR RECIEVED RECEIPTS");
                         receiptType = "displayed";
                         receiptId   = getAttr(child, "id");
                     }
@@ -476,14 +478,14 @@ public final class EncryptedMessageHandler implements StanzaHandler {
 
     /**
      * Server receipt - confirms server received the message.
-     * Sent even for offline messages (confirms storage).
+     * Sent even for offline  messages (confirms storage). when the receiver is offline
      */
     private void sendServerReceipt(Session sender, String messageId) {
 
         boolean sent = sender.writeXML(String.format(
                 "<message id='%s' to='%s'>" +
                         "<server-received xmlns='%s' id='%s'/>" +
-                        "</message>",
+                    "</message>",
                 UUID.randomUUID(),
                 escapeXml(sender.getContactId()),
                 SERVER_RECEIPT_NS,

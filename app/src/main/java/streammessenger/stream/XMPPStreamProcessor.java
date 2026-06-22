@@ -139,7 +139,6 @@ public final class XMPPStreamProcessor {
             if (event.isEndElement()) {
                 String localName = event.asEndElement().getName().getLocalPart();
                 if ("stream".equals(localName)) {
-                    logger.info("Stream closed by client uid=" + session.getSessionId());
                     session.writeXML("</stream:stream>");
                     return;
                 }
@@ -352,12 +351,10 @@ public final class XMPPStreamProcessor {
                 session.incrementInboundCount();
 
                 if (isGroupStanza(element, localName)) {
-                    logger.info("handling group message");
                     if (groupHandler != null) {
                         groupHandler.handle(element, reader, session);
                         metrics.stanzaProcessed();
                     } else {
-                        logger.warning("Group handler not registered");
                         consumeElement(reader);
                     }
                 } else {
@@ -382,21 +379,21 @@ public final class XMPPStreamProcessor {
 
     /**
      * Determines if a stanza should be routed to the group handler.
-     *
+     * <p>
      * RULES:
-     *
+     * <p>
      * 1. <message type='groupchat'>             → GROUP
      *    Standard XEP-0045 group chat message
-     *
+     * <p>
      * 2. <message to='group@conference.domain'> → GROUP
      *    Message addressed to a MUC room
-     *
+     * <p>
      * 3. <presence to='group@conference.domain/nick'> → GROUP
      *    Join/leave/update presence in a MUC room
-     *
+     * <p>
      * 4. <iq>... <* xmlns='urn:xmpp:group:0'/> → GROUP
      *    Custom group management IQ
-     *
+     * <p>
      * 5. Everything else → 1-1 handlers
      */
     private boolean isGroupStanza(StartElement element, String localName) {
@@ -486,6 +483,7 @@ public final class XMPPStreamProcessor {
                 .name("offline-delivery-" + session.getSessionId())
                 .start(() -> {
                     try {
+                        logger.info("Offline-delivery thread running");
                         java.util.List<DatabaseManager
                                 .EncryptedOfflineMessage> messages =
                                 db.fetchEncryptedOfflineMessages(session.getContactId());

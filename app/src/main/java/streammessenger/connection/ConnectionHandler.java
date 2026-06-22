@@ -70,14 +70,14 @@ public final class ConnectionHandler implements Runnable {
         registry.register(session);
         metrics.connectionAccepted();
 
-        logger.info("Connection accepted uid=" + session
+        logger.info("Connection accepted sessionId=" + session
                 + " from=" + socket.getInetAddress().getHostAddress());
 
         try {
             runConnectionLifecycle(session);
         } catch (Exception e) {
             // Top-level safety net - should never reach here in normal operation
-            logger.warning("Unhandled exception in connection uid=" + sessionId
+            logger.warning("Unhandled exception in connection sessionId=" + sessionId
                     + ": " + e.getClass().getSimpleName() + ": " + e.getMessage());
         } finally {
             cleanup(session);
@@ -107,7 +107,7 @@ public final class ConnectionHandler implements Runnable {
                 processStream(session);
             } catch (StartTLSException nested) {
                 // STARTTLS inside a TLS stream is a protocol error
-                logger.warning("Nested STARTTLS attempt uid=" + sessionId);
+                logger.warning("Nested STARTTLS attempt sessionId=" + sessionId);
                 session.writeStreamError(
                     StreamException.Condition.POLICY_VIOLATION,
                     "STARTTLS already negotiated"
@@ -135,13 +135,13 @@ public final class ConnectionHandler implements Runnable {
             throw e; // Propagate intentionally to be handled outside with the custom STARTTLSException handler
 
         } catch (SocketTimeoutException e) {
-            logger.info("Socket timeout for uid=" + sessionId + " (client idle). Closing.");
+            logger.info("Socket timeout for sessionId=" + sessionId + " (client idle). Closing.");
             session.writeStreamError(
                 StreamException.Condition.CONNECTION_TIMEOUT, "Idle timeout"
             );
 
         } catch (XMLStreamException e) {
-            logger.warning("XML parse error uid=" + sessionId + ": " + e.getMessage());
+            logger.warning("XML parse error sessionId=" + sessionId + ": " + e.getMessage());
             session.writeStreamError(
                 StreamException.Condition.NOT_WELL_FORMED,
                 "XML parse error"
@@ -149,10 +149,10 @@ public final class ConnectionHandler implements Runnable {
 
         } catch (IOException e) {
             // Client disconnected - not an error, just clean up
-            logger.info("Client disconnected uid=" + sessionId + ": " + e.getMessage());
+            logger.info("Client disconnected sessionId=" + sessionId + ": " + e.getMessage());
 
         } catch (Exception e) {
-            logger.warning("Stream processing error uid=" + sessionId
+            logger.warning("Stream processing error sessionId=" + sessionId
                     + ": " + e.getClass().getSimpleName() + ": " + e.getMessage());
             session.writeStreamError(
                 StreamException.Condition.INTERNAL_SERVER_ERROR,
@@ -184,7 +184,7 @@ public final class ConnectionHandler implements Runnable {
 
         } catch (IOException e) {
             metrics.tlsFailure();
-            logger.warning("TLS upgrade I/O error uid=" + sessionId + ": " + e.getMessage());
+            logger.warning("TLS upgrade I/O error sessionId=" + sessionId + ": " + e.getMessage());
             return null;
         }
     }
@@ -211,7 +211,7 @@ public final class ConnectionHandler implements Runnable {
                 return socket.getInputStream();
             }
         } catch (IOException e) {
-            logger.warning("Cannot get InputStream for uid=" + sessionId + ": " + e.getMessage());
+            logger.warning("Cannot get InputStream for session=" + sessionId + ": " + e.getMessage());
         }
         return null;
     }
@@ -245,12 +245,10 @@ public final class ConnectionHandler implements Runnable {
             metrics.sessionDeAuthenticated();
         }
 
-        String lastXml = session.getSmState().getLastXml();
-        logger.info("Last handled XML is: "+lastXml); // TODO: Parse the xml and gets the ulid from there
         session.closeQuietly();
         metrics.connectionClosed();
 
-        logger.info("Connection closed uid=" + sessionId
+        logger.info("Connection closed sessionId=" + sessionId
                 + " contactId=" + session.getContactId());
     }
 }

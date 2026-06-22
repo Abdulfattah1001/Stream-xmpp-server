@@ -56,7 +56,6 @@ public final class PresenceHandler implements StanzaHandler {
         for (Session other : registry.getAllSessions()) {
             if (!other.getSessionId().equals(session.getSessionId()) && other.isAuthenticated()) {
                 other.writeXML(presenceXml);
-                logger.info("Present sent");
                 broadcast++;
             }
         }
@@ -66,7 +65,7 @@ public final class PresenceHandler implements StanzaHandler {
         deliverPendingItems(session);
 
         // TODO: Fetch the last ULID received by the client from the server
-        List<GroupRepository.UnifiedTimelineItem> offlineMessages = db.getUnifiedTimelineDelta(session.getUid(), "00000000000000000000000000", 100);
+        /*List<GroupRepository.UnifiedTimelineItem> offlineMessages = db.getUnifiedTimelineDelta(session.getUid(), "00000000000000000000000000", 100);
 
         if(!offlineMessages.isEmpty()) {
             for(GroupRepository.UnifiedTimelineItem entity : offlineMessages){
@@ -98,7 +97,7 @@ public final class PresenceHandler implements StanzaHandler {
             }
         }else {
             logger.info("Events is empty");
-        }
+        }*/
 
         //TODO: serverContext.getSenderKeyManager().deliverMissedRotations(session, session.getContactId());
     }
@@ -113,7 +112,6 @@ public final class PresenceHandler implements StanzaHandler {
      * then messages (so they appear after the contact list is current).
      */
     private void deliverPendingItems(Session session) {
-        logger.info("Delivering pending items");
         String contactId = session.getContactId();
         // 1. Deliver pending subscription requests
         deliverPendingSubscriptions(session, contactId);

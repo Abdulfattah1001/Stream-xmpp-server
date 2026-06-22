@@ -27,7 +27,7 @@ public final class GroupMessageRouter {
 
     private final GroupRepository repository;
     private final SessionRegistry sessionRegistry;
-    private final DatabaseManager db;  // For offline storage
+    private final DatabaseManager db;
 
     private final ExecutorService fanoutPool = new ThreadPoolExecutor(
             20, 100, 60L, TimeUnit.SECONDS,
@@ -63,6 +63,7 @@ public final class GroupMessageRouter {
                               String mediaStorageKey,
                               String mimeType,
                               long fileSizeBytes) {
+        logger.info("Routing message to group members");
 
         Group group = repository.get(groupId);
 
@@ -95,17 +96,8 @@ public final class GroupMessageRouter {
 
         if (messageId == null) messageId = UUID.randomUUID().toString();
 
-        // store the message in the  database
-        repository.storeEncryptedMessageEventModel(
-                senderUserId,
-                groupId,
-                messageId,
-                messageType == null ? "text" : messageType,
-                encryptedPayload,
-                null,
-                0,
-                0
-        );
+        // store the message in the  database for each user
+
         // Build the stanza
         String stanza = buildMessageStanza(
                 group, sender, messageId, encryptedPayload, iv,
@@ -114,8 +106,11 @@ public final class GroupMessageRouter {
 
         // Get all member JIDs (except sender)
         List<String> recipientJids = repository.listMemberJids(groupId);
+        logger.info("Members size is: "+recipientJids.size());
 
         for (String recipientJid : recipientJids) {
+            logger.info("JID: "+recipientJid);
+            // Skip the sender of the message
             if (recipientJid.equals(senderJid)) continue;
 
             String finalMessageId = messageId;
@@ -154,13 +149,16 @@ public final class GroupMessageRouter {
             }
 
             if (!delivered) {
+                logger.info("Saving for this user as offline");
                 // Offline - store for delivery on next connection
-                db.storeEncryptedMessage(
+                boolean stored = db.storeEncryptedMessage(
                         senderJid, recipientJid, messageId,
                         messageType, encryptedPayload, iv,
                         mediaStorageKey, null, mimeType,
                         fileSizeBytes, null
                 );
+
+                logger.info("STORED: "+stored);
                 // TODO: trigger push notification via PushNotificationService
             }
         } catch (Exception e) {
@@ -169,7 +167,7 @@ public final class GroupMessageRouter {
         }
     }
 
-    private String buildMessageStanza(Group group, GroupMember sender,
+    private String buildEncryptedMessageStanza(Group group, GroupMember sender,
                                         String messageId,
                                         String encryptedPayload, String iv,
                                         String messageType,
@@ -178,7 +176,7 @@ public final class GroupMessageRouter {
                                         long fileSizeBytes) {
         StringBuilder sb = new StringBuilder();
         sb.append(String.format(
-            "<message id='%s' from='%s' type='group_chat'>" +
+            "<message id='%s' from='%s' type='groupchat'>" +
             "<group xmlns='urn:xmpp:group:0' id='%s'/>" +
             "<from_user>%s</from_user>" +
             "<encrypted xmlns='urn:xmpp:e2ee:0'" +
@@ -206,6 +204,22 @@ public final class GroupMessageRouter {
         sb.append("</encrypted></message>");
 
         return sb.toString();
+    }
+
+    private String buildMessageStanza(Group group, GroupMember sender,
+                                      String messageId,
+                                      String encryptedPayload, String iv,
+                                      String messageType,
+                                      String mediaStorageKey,
+                                      String mimeType,
+                                      long fileSizeBytes) {
+
+
+        return String.format("""
+                <message id='%s' from='%s' type='groupchat'>
+                <body>%s</body>
+                </message>
+                """, messageId, group.groupId()+"@conference.omnyrex.com/"+sender.userId(), encryptedPayload);
     }
 
     private String escapeXml(String s) {

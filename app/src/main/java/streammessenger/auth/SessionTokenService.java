@@ -95,6 +95,7 @@ public final class SessionTokenService {
         db.touchSessionToken(tokenHash);
 
         return new ValidatedToken(record.userId(),
+                record.contactId(),
                 record.pushToken(), record.platform());
     }
 
@@ -136,6 +137,7 @@ public final class SessionTokenService {
 
     public record ValidatedToken(
             String userId, // u_7f3a9b2ce
+            String contactId,
             String pushToken,
             String platform
     ) {}

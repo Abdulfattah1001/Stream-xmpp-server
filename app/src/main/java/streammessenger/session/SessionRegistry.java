@@ -31,10 +31,11 @@ public final class SessionRegistry {
     private static final Logger logger = Logger.getLogger(SessionRegistry.class.getName());
 
     // uid → Session (primary index)
-    private final ConcurrentHashMap<String, Session> byUid =
+    // TODO: To be renamed to bySessionId
+    private final ConcurrentHashMap<String, Session> bySessionId =
             new ConcurrentHashMap<>();
 
-    // contactId → Set of uids (secondary index, supports multiple resources)
+    // userId → Set of sessionIds (secondary index, supports multiple resources)
     private final ConcurrentHashMap<String, Set<String>> contactToUids =
             new ConcurrentHashMap<>();
 
@@ -52,34 +53,30 @@ public final class SessionRegistry {
 
     /**
      * Registers a new session immediately when a TCP connection is accepted.
-     * At this point the session has no contactId - just a uid.
+     * At this point the session has no contactId - just a sessionId.
      */
     public void register(Session session) {
-        byUid.put(session.getSessionId(), session);
-        logger.fine("Registered session uid=" + session.getSessionId());
+        bySessionId.put(session.getSessionId(), session);
     }
 
     /**
-     * Binds a contactId to a session after successful authentication.
+     * Binds a userId to a session after successful authentication.
      * <p>
      * Supports multiple resources: Alice can log in from phone AND laptop.
      * Both sessions get added to the Set for alice@domain.
      * <p>
-     * If the same uid is already bound (re-auth on same connection),
+     * If the same sessionId is already bound (re-auth on same connection),
      * this is idempotent.
      */
     public void bindAuthenticatedSession(String contactId, Session session) {
-        logger.info("session state:: UID => "+session.getUid() +
-                " :: contactID =>"+session.getContactId() +
-                " :: JID =>"+session.getJid());
         contactToUids.compute(contactId, (k, existingUids) -> {
-            Set<String> uids = existingUids != null
+            Set<String> sessionIds = existingUids != null
                     ? existingUids
                     : ConcurrentHashMap.newKeySet();
-            uids.add(session.getSessionId());
-            return uids;
+            sessionIds.add(session.getSessionId());
+            return sessionIds;
         });
-        logger.info("Session bound: contactId=" + contactId
+        logger.info("Session bound: userId=" + contactId
                 + " sessionId=" + session.getSessionId()
                 + " totalResourcesForContact=" + contactToUids.get(contactId).size());
     }
@@ -96,26 +93,27 @@ public final class SessionRegistry {
         removeByUid(session.getSessionId(), session.getContactId());
     }
 
-    public void removeByUid(String uid, String contactId) {
-        byUid.remove(uid);
+    public void removeByUid(String sessionId, String contactId) {
+        bySessionId.remove(sessionId);
 
         if (contactId != null) {
             contactToUids.computeIfPresent(contactId, (k, uids) -> {
-                uids.remove(uid);
+                uids.remove(sessionId);
                 // If no more resources for this contact, remove the entry entirely
                 return uids.isEmpty() ? null : uids;
             });
         }
 
-        logger.fine("Removed session uid=" + uid);
+        logger.fine("Removed session sessionId=" + sessionId);
     }
 
     // =========================================================================
     // Lookup
     // =========================================================================
 
+    //TODO: To be renamed to getBySessionId()
     public Optional<Session> getByUid(String uid) {
-        return Optional.ofNullable(byUid.get(uid));
+        return Optional.ofNullable(bySessionId.get(uid));
     }
 
     /**
@@ -132,7 +130,7 @@ public final class SessionRegistry {
 
         // Pick the most recently active session among all resources
         return uids.stream()
-                .map(byUid::get)
+                .map(bySessionId::get)
                 .filter(Objects::nonNull)
                 .filter(Session::isAuthenticated)
                 .max(Comparator.comparingLong(Session::getLastActivity));
@@ -140,12 +138,12 @@ public final class SessionRegistry {
 
     /**
      * Returns ALL sessions for a contactId (all resources/devices).
-     *
+     * <p>
      * Used by:
      *  - RosterManager: push roster updates to all of user's devices
      *  - PresenceHandler: send presence to all resources
      *  - StreamManagement: find the right session to resume
-     *
+     * <p>
      * This is the method that was MISSING from the original code
      * and caused issues in RosterManager and SubscriptionHandler.
      */
@@ -154,7 +152,7 @@ public final class SessionRegistry {
         if (uids == null || uids.isEmpty()) return Collections.emptyList();
 
         return uids.stream()
-                .map(byUid::get)
+                .map(bySessionId::get)
                 .filter(Objects::nonNull)
                 .filter(Session::isAuthenticated)
                 .collect(Collectors.toList());
@@ -183,7 +181,7 @@ public final class SessionRegistry {
      * Used by: SessionReaper, PresenceHandler broadcast, shutdown.
      */
     public Collection<Session> getAllSessions() {
-        return Collections.unmodifiableCollection(byUid.values());
+        return Collections.unmodifiableCollection(bySessionId.values());
     }
 
     /**
@@ -194,7 +192,7 @@ public final class SessionRegistry {
     }
 
     public int size() {
-        return byUid.size();
+        return bySessionId.size();
     }
 
     /**
@@ -202,6 +200,6 @@ public final class SessionRegistry {
      * Prefer typed methods above for new code.
      */
     public ConcurrentHashMap<String, Session> getRawMap() {
-        return byUid;
+        return bySessionId;
     }
 }

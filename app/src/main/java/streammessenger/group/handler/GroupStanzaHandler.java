@@ -6,6 +6,7 @@ import streammessenger.group.service.*;
 import streammessenger.muc.model.GroupEventType;
 import streammessenger.muc.model.GroupSystemEvent;
 import streammessenger.session.Session;
+import streammessenger.session.SessionRegistry;
 import streammessenger.stanza.StanzaHandler;
 
 
@@ -68,17 +69,20 @@ public final class GroupStanzaHandler implements StanzaHandler {
     private final GroupService groupService;
     private final GroupMessageRouter messageRouter;
     private final GroupSyncService syncService;
+    private final SessionRegistry sessionRegistry;
     private final String groupDomain;
 
     public GroupStanzaHandler(GroupRepository repository,
                                 GroupService groupService,
                                 GroupMessageRouter messageRouter,
                                 GroupSyncService syncService,
+                                SessionRegistry registry,
                                 String groupDomain) {
         this.repository    = repository;
         this.groupService  = groupService;
         this.messageRouter = messageRouter;
         this.syncService   = syncService;
+        this.sessionRegistry = registry;
         this.groupDomain   = groupDomain;
     }
 
@@ -109,6 +113,7 @@ public final class GroupStanzaHandler implements StanzaHandler {
     private void handleGroupMessage(StartElement element,
                                       XMLEventReader reader,
                                       Session session) {
+
         String to        = getAttr(element, "to");
         String type      = getAttr(element, "type");
         String messageId = getAttr(element, "id");
@@ -142,7 +147,7 @@ public final class GroupStanzaHandler implements StanzaHandler {
             // Echo confirmation to sender
             session.writeXML(String.format(
                 "<message id='%s' from='%s' to='%s' type='receipt'>" +
-                "<received xmlns='urn:xmpp:receipts' id='%s'/>" +
+                    "<received xmlns='urn:xmpp:receipts' id='%s'/>" +
                 "</message>",
                 UUID.randomUUID(),
                 escapeXml(groupJid),

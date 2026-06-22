@@ -240,6 +240,7 @@ public class Server {
         this.groupStanzaHandler = new GroupStanzaHandler(groupRepository,
                 new streammessenger.group.service.GroupService(groupRepository, notifier),
                 new GroupMessageRouter(groupRepository, registry, db), new GroupSyncService(groupRepository, notifier),
+                registry,
                 "conference."+config.getDomainName());
 
         try{

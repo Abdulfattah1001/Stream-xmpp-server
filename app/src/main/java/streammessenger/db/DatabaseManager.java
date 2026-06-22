@@ -714,6 +714,7 @@ public final class DatabaseManager {
         String sql = """
             SELECT
                 st.user_id,
+                u.jid,
                 st.push_token,
                 st.platform,
                 st.revoked_at,
@@ -738,6 +739,7 @@ public final class DatabaseManager {
 
                 return new SessionTokenRecord(
                         rs.getString("user_id"),
+                        rs.getString("jid"),
                         rs.getString("push_token"),
                         rs.getString("platform"),
                         revokedAt != null ? revokedAt.toInstant() : null,
@@ -889,7 +891,6 @@ public final class DatabaseManager {
     // =========================================================================
 
     public void updateLastSeen(String userId) {
-        logger.info("Updating last seen from virtual thread");
         String sql = """
             UPDATE users
             SET last_seen  = NOW(),
@@ -1570,6 +1571,7 @@ public final class DatabaseManager {
 
     public record SessionTokenRecord(
             String userId,
+            String contactId,
             String pushToken,
             String platform,
             Instant revokedAt,  // null = not revoked
@@ -1904,6 +1906,8 @@ public final class DatabaseManager {
                                          String mimeType,
                                          long fileSizeBytes,
                                          String replyToId) {
+        logger.info("FROM JID IS: "+fromJid);
+        logger.info("TO JID IS: "+toJid);
         String sql = """
                 INSERT INTO offline_messages (
                     message_id,
@@ -1954,7 +1958,6 @@ public final class DatabaseManager {
 
             int rows = stmt.executeUpdate();
             conn.commit();
-            logger.info("Caching persisted");
             return rows > 0;
 
         } catch (SQLException e) {
@@ -2111,13 +2114,13 @@ public final class DatabaseManager {
      */
     public List<EncryptedOfflineMessage> fetchEncryptedOfflineMessages(
             String toJid) {
-
+        logger.info("Fetching offline messages...");
         String sql = """
             DELETE FROM offline_messages
             WHERE to_user_id = (
                 SELECT user_id FROM users WHERE jid = ?
             )
-            AND status = 'pending'
+            --comments out AND status = 'pending'
             RETURNING
                 message_id,
                 (SELECT jid FROM users WHERE user_id = from_user_id) AS from_jid,
@@ -2168,12 +2171,12 @@ public final class DatabaseManager {
         return messages;
     }
 
-
     /**
-     * Marks a message as delivered.
+     * Marks a message as delivered also updates the users last_ulid to this message ulid.
      * Called when the recipient's session acknowledges receipt.
      */
     public void markMessageDelivered(String messageId) {
+        logger.info("Marking message as delivered");
         String sql = """
             UPDATE offline_messages
             SET status       = 'delivered',
@@ -2194,11 +2197,13 @@ public final class DatabaseManager {
         }
     }
 
+
     /**
      * Marks a message as read.
      * Called when the recipient opens the chat and reads the message.
      */
     public void markMessageRead(String messageId) {
+        logger.info("Marking message ad read");
         String sql = """
             UPDATE offline_messages
             SET status  = 'read',

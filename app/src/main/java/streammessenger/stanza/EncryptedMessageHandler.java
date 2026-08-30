@@ -7,6 +7,7 @@ import javax.xml.stream.events.Attribute;
 import javax.xml.stream.events.StartElement;
 import javax.xml.stream.events.XMLEvent;
 
+import java.util.Optional;
 import java.util.UUID;
 import java.util.logging.Logger;
 
@@ -77,13 +78,17 @@ public final class EncryptedMessageHandler implements StanzaHandler {
     private final SessionRegistry registry;
     private final DatabaseManager db;
     private final ServerMetrics metrics;
+    private final ReactionHandler reactionHandler;
+    private final CRDTNoteHandler crdtNoteHandler;
 
     public EncryptedMessageHandler(SessionRegistry registry,
                           DatabaseManager db,
-                          ServerMetrics metrics) {
+                          ServerMetrics metrics, ReactionHandler reactionHandler, CRDTNoteHandler crdtNoteHandler) {
         this.registry = registry;
         this.db       = db;
         this.metrics  = metrics;
+        this.reactionHandler = reactionHandler;
+        this.crdtNoteHandler = crdtNoteHandler;
     }
 
     @Override
@@ -100,8 +105,6 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         String to   = getAttr(element, "to") + "@localhost";  // u_qwicvu
         String type = getAttr(element, "type");
 
-        logger.info("To is: "+to);
-
         if (id == null) id = UUID.randomUUID().toString();
 
         if (to == null || to.isBlank()) {
@@ -109,20 +112,30 @@ public final class EncryptedMessageHandler implements StanzaHandler {
             return;
         }
 
+
+        try{
+            XMLEvent event = reader.peek();
+            if(event.isStartElement()){
+                StartElement sE = event.asStartElement();
+                String name = sE.getName().getLocalPart();
+                if(name.equals("reactions")) reactionHandler.handle(sE, reader, session);
+                if(name.equals("crdt-op")) crdtNoteHandler.handle(sE, reader, session);
+            }
+        } catch (XMLStreamException e) {
+            logger.info("Error peeking <message> stanza: "+e.getMessage());
+        }
+
         // Strip resource - route to bare JID
         String toContactId = bareJid(to); // assuming it comes in the format of u_wbcwvvc@server_name.com/mobile
         // Parse the message content
         ParsedMessage parsed = parseMessageContent(reader, id);
 
-        logger.info("Parsed message");
         // Update the last seen status of the sender
         session.touchActivity();
 
-        logger.info("after last activity");
 
         // Route based on content type
         if (parsed.isReceiptOnly()) {
-            logger.info("after last activity 1");
             // Delivery/read receipt - route directly
             routeReceipt(parsed, session, toContactId);
             return;
@@ -131,7 +144,6 @@ public final class EncryptedMessageHandler implements StanzaHandler {
 
 
         if (parsed.isChatStateOnly()) {
-            logger.info("after last activity chat state");
             // Typing indicator - route directly, never store
             routeChatState(parsed, session, toContactId, type);
             return;
@@ -140,7 +152,6 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         if (parsed.encryptedContent() == null && parsed.mediaUrl == null) {
             // No encrypted content and not a receipt/chat state
             // Reject - we require E2E encryption
-            logger.info("ERROR ENCRYPTED CONTENT");
             sendNotAcceptableError(session, id);
             consumeElement(reader);
             return;
@@ -164,19 +175,33 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                                      String toContactId,
                                      String type,
                                      String messageId) {
+        // Check the message keys
+        String identityKey = parsed.identityKey();
+        logger.info("The keys are: "+identityKey);
+        Optional<String> key = db.getIdentityKey(toContactId);
+        if(key.isPresent() &&!key.get().equals(identityKey)) {
+            sender.writeXML(String.format("<message type='INVALID_KEY' id='%s' from='%s'> </message>", messageId, toContactId));
+            return;
+        }
         // Build the full stanza XML to forward/store
         String stanzaXml = buildEncryptedStanza(
-                messageId, sender.getContactId(), toContactId,
+                messageId, sender.getUid()/* sender.getContactId() */, toContactId,
                 type, parsed
         );
 
         boolean delivered = false;
 
         // Try online delivery first
-        java.util.Optional<Session> recipientSession = registry.getByContactId(toContactId);
+        String id = toContactId;
+        if(!toContactId.contains("@")) id = toContactId+"@localhost";
+        java.util.Optional<Session> recipientSession = registry.getByContactId(id);
 
         if (recipientSession.isPresent() && recipientSession.get().isAuthenticated()) {
             delivered = recipientSession.get().writeXML(stanzaXml);
+            logger.info("Session exist for id: "+id);
+            if(delivered) logger.info("Message sent"); else logger.info("Message not sent");
+        } else {
+            logger.info("Session does not exist: "+id);
         }
 
         if (delivered) {
@@ -184,7 +209,6 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         } else {
             // Recipient offline - store encrypted ciphertext
             if (db.contactExists(toContactId)) {
-
                 boolean store = db.storeEncryptedMessage(
                         sender.getUid(),
                         toContactId,
@@ -225,6 +249,7 @@ public final class EncryptedMessageHandler implements StanzaHandler {
     private void routeReceipt(ParsedMessage parsed,
                               Session sender,
                               String toContactId) {
+        logger.info("The sender of the receipt is: "+sender.getContactId()+" :The receiver is: "+toContactId);
         String receiptXml = String.format(
                 "<message id='%s' from='%s' to='%s'>" +
                         "<%s xmlns='%s' id='%s'/>" +
@@ -237,22 +262,23 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                 escapeXml(parsed.receiptId())
         );
 
-        registry.getByContactId(toContactId).ifPresentOrElse(s -> {
+        registry.getByContactId(toContactId.split("@")[0]+"@localhost").ifPresentOrElse(s -> {
             if (s.isAuthenticated()) {
                 boolean sent =  s.writeXML(receiptXml);
                 // If the user is online, but couldn't sent
                 if(!sent){
-                    db.storeReceipt(sender.getContactId(), toContactId, parsed.receiptId, parsed.receiptType);
+                    db.storeReceipt(sender.getUid(), toContactId, parsed.receiptId, parsed.receiptType);
                 }
 
-                if ("displayed".equals(parsed.receiptType())) {
+                /*if ("displayed".equals(parsed.receiptType())) {
                     db.markMessageRead(parsed.receiptId());
                 } else {
                     db.markMessageDelivered(parsed.receiptId());
-                }
+                }*/
             }
         }, () -> {
             // user offline
+
             db.storeReceipt(
                     sender.getContactId(),
                     toContactId,
@@ -386,6 +412,7 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         String iv                = null;
         String msgType           = "text";
         String mediaStorageKey   = null;
+        String identityKey       = null;
         String mediaUrl          = null;
         String encryptedMetadata = null;
         String metaIv            = null;
@@ -416,6 +443,7 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                         mediaUrl        = getAttr(child, "media_url");
                         mimeType        = getAttr(child, "mime");
                         String size     = getAttr(child, "size");
+                        identityKey     = getAttr(child, "identity_key");
 
                         if (size != null) {
                             try { fileSizeBytes = Long.parseLong(size); }
@@ -466,7 +494,7 @@ public final class EncryptedMessageHandler implements StanzaHandler {
 
         return new ParsedMessage(
                 encryptedContent, iv, msgType,
-                mediaStorageKey, mediaUrl,encryptedMetadata, metaIv,
+                mediaStorageKey, identityKey, mediaUrl,encryptedMetadata, metaIv,
                 mimeType, fileSizeBytes, replyToId,
                 receiptType, receiptId, chatState
         );
@@ -481,7 +509,6 @@ public final class EncryptedMessageHandler implements StanzaHandler {
      * Sent even for offline  messages (confirms storage). when the receiver is offline
      */
     private void sendServerReceipt(Session sender, String messageId) {
-
         boolean sent = sender.writeXML(String.format(
                 "<message id='%s' to='%s'>" +
                         "<server-received xmlns='%s' id='%s'/>" +
@@ -585,6 +612,7 @@ public final class EncryptedMessageHandler implements StanzaHandler {
             String iv,
             String msgType,
             String mediaStorageKey,
+            String identityKey,
             String mediaUrl,
             String encryptedMetadata,
             String metaIv,

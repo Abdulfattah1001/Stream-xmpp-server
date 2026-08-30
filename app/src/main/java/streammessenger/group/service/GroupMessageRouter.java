@@ -63,7 +63,6 @@ public final class GroupMessageRouter {
                               String mediaStorageKey,
                               String mimeType,
                               long fileSizeBytes) {
-        logger.info("Routing message to group members: sender="+senderJid+" senderJid="+senderJid+" groupId="+groupId+" PAYLOAD: "+encryptedPayload);
 
         Group group = repository.get(groupId);
 
@@ -85,7 +84,6 @@ public final class GroupMessageRouter {
             throw new GroupException(GroupException.Code.NOT_AUTHORIZED,
                     "Only admins can send messages in this group");
         }
-
 
         // Check mute
         if (sender.mutedUntil() != null
@@ -112,6 +110,7 @@ public final class GroupMessageRouter {
             if (recipientJid.equals(senderJid)) continue;
 
             String finalMessageId = messageId;
+
             fanoutPool.execute(() -> {
                 deliverToRecipient(recipientJid, stanza,
                         senderJid, finalMessageId,
@@ -156,7 +155,6 @@ public final class GroupMessageRouter {
                         fileSizeBytes, null
                 );
 
-                logger.info("STORED: "+stored);
                 // TODO: trigger push notification via PushNotificationService
             }
         } catch (Exception e) {
@@ -215,9 +213,9 @@ public final class GroupMessageRouter {
 
         return String.format("""
                 <message id='%s' from='%s' type='groupchat'>
-                <body>%s</body>
+                    <body>%s</body>
                 </message>
-                """, messageId, group.groupId()+"@conference.omnyrex.com/"+sender.userId(), encryptedPayload);
+                """, messageId, group.jid()+"/"+sender.userId(), encryptedPayload);
     }
 
     private String escapeXml(String s) {

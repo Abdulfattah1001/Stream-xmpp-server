@@ -36,7 +36,7 @@ public final class SessionRegistry {
             new ConcurrentHashMap<>();
 
     // userId → Set of sessionIds (secondary index, supports multiple resources)
-    private final ConcurrentHashMap<String, Set<String>> contactToUids =
+    private final ConcurrentHashMap<String, Set<String>> contactIdsToSessionIds =
             new ConcurrentHashMap<>();
 
     private static final SessionRegistry INSTANCE = new SessionRegistry();
@@ -69,16 +69,16 @@ public final class SessionRegistry {
      * this is idempotent.
      */
     public void bindAuthenticatedSession(String contactId, Session session) {
-        contactToUids.compute(contactId, (k, existingUids) -> {
+        contactIdsToSessionIds.compute(contactId, (k, existingUids) -> {
             Set<String> sessionIds = existingUids != null
                     ? existingUids
                     : ConcurrentHashMap.newKeySet();
             sessionIds.add(session.getSessionId());
             return sessionIds;
         });
-        logger.info("Session bound: userId=" + contactId
+        logger.info("Session bound: contactId=" + contactId
                 + " sessionId=" + session.getSessionId()
-                + " totalResourcesForContact=" + contactToUids.get(contactId).size());
+                + " totalResourcesForContact=" + contactIdsToSessionIds.get(contactId).size());
     }
 
     // =========================================================================
@@ -90,14 +90,14 @@ public final class SessionRegistry {
      * Safe to call multiple times.
      */
     public void remove(Session session) {
-        removeByUid(session.getSessionId(), session.getContactId());
+        removeBySessionId(session.getSessionId(), session.getContactId());
     }
 
-    public void removeByUid(String sessionId, String contactId) {
+    public void removeBySessionId(String sessionId, String contactId) {
         bySessionId.remove(sessionId);
 
         if (contactId != null) {
-            contactToUids.computeIfPresent(contactId, (k, uids) -> {
+            contactIdsToSessionIds.computeIfPresent(contactId, (k, uids) -> {
                 uids.remove(sessionId);
                 // If no more resources for this contact, remove the entry entirely
                 return uids.isEmpty() ? null : uids;
@@ -124,7 +124,7 @@ public final class SessionRegistry {
      * Used by MessageHandler when routing to a bare JID (no resource specified).
      */
     public Optional<Session> getByContactId(String contactId) {
-        Set<String> uids = contactToUids.get(contactId);
+        Set<String> uids = contactIdsToSessionIds.get(contactId);
         if (uids == null || uids.isEmpty()) return Optional.empty();
 
         // Pick the most recently active session among all resources
@@ -147,7 +147,7 @@ public final class SessionRegistry {
      * and caused issues in RosterManager and SubscriptionHandler.
      */
     public List<Session> getSessionsByContactId(String contactId) {
-        Set<String> uids = contactToUids.get(contactId);
+        Set<String> uids = contactIdsToSessionIds.get(contactId);
         if (uids == null || uids.isEmpty()) return Collections.emptyList();
 
         return uids.stream()

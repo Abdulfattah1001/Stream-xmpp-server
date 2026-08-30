@@ -36,8 +36,9 @@ dependencies {
     implementation("com.googlecode.json-simple:json-simple:1.1.1")
 
     implementation("com.cloudinary:cloudinary-http5:2.3.2")
-    //implementation("io.github.f4b6a3:ulid-creator:5.2.3")
     implementation("com.github.f4b6a3:ulid-creator:5.2.4")
+
+    compileOnly("io.lettuce:lettuce-core:6.7.1.RELEASE")
 }
 
 java {

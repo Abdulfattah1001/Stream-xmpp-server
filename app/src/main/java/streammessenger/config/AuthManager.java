@@ -69,7 +69,7 @@ public final class AuthManager {
             );
         }
 
-        if (session.getSSLSocket() == null) {
+        if (session.isSecure()/*getSSLSocket()== null*/) {
             metrics.authFailure();
             throw new AuthenticationException(
                 "TLS required before authentication",

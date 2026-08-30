@@ -2,12 +2,12 @@ package streammessenger.vhost;
 
 /**
  * Configuration for one virtual hosted domain.
- *
+ * <p>
  * A single XMPP server can host multiple domains:
  *   company.com        → corporate users
  *   personal.net       → personal accounts
  *   conference.company → MUC (Multi-User Chat) rooms
- *
+ * <p>
  * Each domain has its own:
  *   - TLS certificate (optional, can share the server's)
  *   - Admin contact

@@ -2,10 +2,14 @@ package streammessenger.group.service;
 
 import streammessenger.group.model.*;
 import streammessenger.group.repository.GroupRepository;
+import streammessenger.muc.model.GroupEventType;
+import streammessenger.muc.model.GroupSystemEvent;
 import streammessenger.session.Session;
 import streammessenger.session.SessionRegistry;
 
+import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
 
@@ -296,6 +300,7 @@ public final class GroupEventNotifier {
                                         String actorUserId,
                                         String name, String description,
                                         String avatarUrl) {
+        logger.info("Notifying members of the group of the changes made");
         Group group = repository.get(groupId);
         if (group == null) return;
 
@@ -312,7 +317,18 @@ public final class GroupEventNotifier {
                   .append("</avatar_url>");
         }
 
-        String event = String.format(
+        GroupSystemEvent systemEvent = new GroupSystemEvent(GroupEventType.DESCRIPTION_CHANGED, actorUserId, null, Instant.now());
+
+
+        String response = String.format(
+                "<message id='%s' from='%s' type='groupchat'>" +
+                        "<system xmlns='urn:xmpp:group:0'>" +
+                            "<event type='%s' actor='%s' subject='%s'/>" +
+                        "</system>" +
+                   "</message>",
+                UUID.randomUUID(), groupId+"/"+actorUserId, systemEvent.type(), systemEvent.actorId(), systemEvent.subjectId());
+
+        /*String event = String.format(
             "<message from='%s'>" +
             "<event xmlns='%s' type='metadata_changed'>" +
             "<group_id>%s</group_id>" +
@@ -328,10 +344,11 @@ public final class GroupEventNotifier {
             fields
         );
 
-        broadcastToAllMembers(groupId, event);
+        broadcastToAllMembers(groupId, event);*/
+        broadcastToAllMembers(groupId, response);
     }
 
-    // =========================================================================
+    // ========================================================================
     // Notification: settings changed
     // =========================================================================
 
@@ -370,6 +387,76 @@ public final class GroupEventNotifier {
         broadcastToAllMembers(groupId, event);
     }
 
+    public void notifyOnlyAdminCanSendSettings(String groupId, String actorUserId, boolean state) {
+        Group group = repository.get(groupId);
+        if (group == null) return;
+
+        long groupVersion = group.stateVersion();
+
+        String event = String.format(
+                "<message id='%s' from='%s' type='groupchat'>" +
+                        "<system xmlns='urn:xmpp:group:0' timestamp='%s'>" +
+                            "<event type='only_admins_can_send_message' actor='%s' subject='%s'>" +
+                                "<state>%b</state>" +
+                            "</event>" +
+                        "</system>" +
+                  "</event></message>",
+                UUID.randomUUID().toString(),
+                escapeXml(group.jid()+"/"+actorUserId),
+                System.currentTimeMillis(),
+                actorUserId,
+                null,
+                state
+        );
+
+        broadcastToAllMembers(groupId, event);
+    }
+
+    public void notifyOnlyAdminCanAddSettings(String groupId, String actorUserId, boolean state) {
+        Group group = repository.get(groupId);
+        if (group == null) return;
+
+        String event = String.format(
+                "<message id='%s' from='%s' type='groupchat'>" +
+                        "<system xmlns='urn:xmpp:group:0' timestamp='%s'>" +
+                            "<event type='only_admins_can_add' actor='%s' subject='%s'>" +
+                                "<state>%b</state>" +
+                        "</event>" +
+                        "</system>" +
+                  "</event></message>",
+                UUID.randomUUID().toString(),
+                escapeXml(group.jid()+"/"+actorUserId),
+                System.currentTimeMillis(),
+                actorUserId,
+                null,
+                state
+        );
+
+        broadcastToAllMembers(groupId, event);
+    }
+
+    public void notifyOnlyAdminCanEditSettings(String groupId, String actorUserId, boolean state) {
+        Group group = repository.get(groupId);
+        if (group == null) return;
+        String event = String.format(
+                "<message id='%s' from='%s' type='groupchat'>" +
+                        "<system xmlns='urn:xmpp:group:0' timestamp='%s'>" +
+                            "<event type='only_admins_can_edit' actor='%s' subject='%s'>" +
+                                "<state>%b</state>" +
+                            "</event>" +
+                        "</system>" +
+                  "</event></message>",
+                UUID.randomUUID().toString(),
+                escapeXml(group.jid()+"/"+actorUserId),
+                System.currentTimeMillis(),
+                actorUserId,
+                null,
+                state
+        );
+
+        broadcastToAllMembers(groupId, event);
+    }
+
     // =========================================================================
     // Full snapshot - sent to new members on first join
     // =========================================================================
@@ -381,7 +468,6 @@ public final class GroupEventNotifier {
      * We send everything: group info, settings, all members.
      */
     public void sendFullSnapshot(Group group, String targetJid) {
-        logger.info("Sending the group full snapshot");
         GroupSettings settings = repository.getSettings(group.groupId());
         List<GroupMember> members = repository.listMembers(group.groupId());
 
@@ -426,7 +512,6 @@ public final class GroupEventNotifier {
         ));
 
         for (GroupMember m : members) {
-            logger.info("Group Admin status: "+m.isAdmin()+"=="+m.isOwner());
             xml.append(String.format(
                 "<member user_id='%s' jid='%s' phone_number='%s' avatar_url='%s' display_status='%s' nickname='testing nickname' display_name='%s'" +
                 " is_admin='%b' is_owner='%b' joined_at='%s'/>",
@@ -469,10 +554,9 @@ public final class GroupEventNotifier {
      * If offline: nothing happens. They'll catch up via delta sync.
      */
     private void deliverToMember(String memberJid, String stanza) {
-        logger.info("Delivering to member whose jid is: "+memberJid);
         notificationPool.execute(() -> {
             try {
-                // Send to ALL their active sessions (multi-device)
+                // Send to ALL their active sessions (multi-device) for currently online members
                 List<Session> sessions = sessionRegistry
                         .getSessionsByContactId(memberJid);
 

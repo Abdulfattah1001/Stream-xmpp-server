@@ -1,6 +1,6 @@
 package streammessenger.stanza;
 
-
+import javax.swing.text.html.Option;
 import javax.xml.namespace.QName;
 import javax.xml.stream.XMLEventReader;
 import javax.xml.stream.XMLStreamException;
@@ -10,6 +10,7 @@ import javax.xml.stream.events.XMLEvent;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.logging.Logger;
 
 import streammessenger.db.ConnectionPool;
@@ -18,24 +19,24 @@ import streammessenger.session.SessionRegistry;
 
 /**
  * Handles message reactions (emoji responses).
- *
+ * <p>
  * Custom namespace: urn:xmpp:reactions:0
- *
+ * <p>
  * WHAT IT DOES:
  * ─────────────
  * User long-presses a message → picks an emoji → sends reaction.
  * All participants in the conversation see the reaction appear.
- *
+ * <p>
  * OPERATIONS:
  *   add     → Add a reaction (or replace existing reaction on same message)
  *   remove  → Remove a reaction
  *   fetch   → Get all reactions for a message
- *
+ * <p>
  * LIMITS:
  *   - One reaction type per user per message (you can only ❤️ once)
  *   - Max 20 different reaction types per message
  *   - Any Unicode emoji allowed + custom reaction IDs (custom_001)
- *
+ * <p>
  * Example - Add reaction:
  *   <message to='alice@domain.com'>
  *     <reactions xmlns='urn:xmpp:reactions:0'
@@ -43,7 +44,7 @@ import streammessenger.session.SessionRegistry;
  *                message_id='msg-uuid'
  *                reaction='❤️'/>
  *   </message>
- *
+ * <p>
  * Example - Server broadcasts to all participants:
  *   <message from='bob@domain.com' to='alice@domain.com'>
  *     <reactions xmlns='urn:xmpp:reactions:0'
@@ -80,6 +81,7 @@ public final class ReactionHandler implements StanzaHandler {
                         XMLEventReader reader,
                         Session session) {
 
+        logger.info("Reactions handler");
         if (!session.isAuthenticated()) {
             consumeElement(reader);
             return;
@@ -111,16 +113,34 @@ public final class ReactionHandler implements StanzaHandler {
 
         String userId = extractUserId(session.getContactId());
 
+        String notification = String.format(
+                "<message from='%s' type='chat'>" +
+                        "<reactions xmlns='%s'" +
+                        " action='%s'" +
+                        " message_id='%s'" +
+                        " reaction='%s'/>" +
+                        "</message>",
+                //escapeXml(session.getContactId()),
+                userId,
+                REACTION_NS, "added",
+                escapeXml(req.messageId()),
+                escapeXml(req.reaction())
+        );
+
+        registry.getByContactId(req.to()+"@localhost").ifPresentOrElse(s -> s.writeXML(notification), () -> {
+            logger.info("The receiver of the reaction is offline, caching");
+            // TODO: Save the reaction into the offline_message for the receiver
+        });
+
         // Upsert: one reaction per user per message
         // If user already reacted, replace with new reaction
-        AddReactionResult result = upsertReaction(
-                req.messageId(), userId, req.reaction());
+        /**AddReactionResult result = upsertReaction(req.messageId(), userId, req.reaction());
 
         if (result == null) return;
 
         // Broadcast to all conversation participants
         broadcastReaction(req.messageId(), session.getContactId(),
-                userId, req.reaction(), "added", result.totalForType());
+                userId, req.reaction(), "added", result.totalForType());*/
     }
 
     // =========================================================================
@@ -131,12 +151,32 @@ public final class ReactionHandler implements StanzaHandler {
         if (req.messageId() == null || req.reaction() == null) return;
 
         String userId = extractUserId(session.getContactId());
-        int remaining = deleteReaction(
+
+        String notification = String.format(
+                "<message from='%s' type='chat'>" +
+                        "<reactions xmlns='%s'" +
+                        " action='%s'" +
+                        " message_id='%s'" +
+                        " reaction='%s'/>" +
+                        "</message>",
+                //escapeXml(session.getContactId()),
+                userId,
+                REACTION_NS, "removed",
+                escapeXml(req.messageId()),
+                escapeXml(req.reaction())
+        );
+
+        registry.getByContactId(req.to()+"@localhost").ifPresentOrElse(s -> s.writeXML(notification), () -> {
+            logger.info("The receiver of the reaction is offline, caching");
+            // TODO: Save the reaction into the offline_message for the receiver
+        });
+
+        /*int remaining = deleteReaction(
                 req.messageId(), userId, req.reaction());
 
         // Broadcast removal to all participants
         broadcastReaction(req.messageId(), session.getContactId(),
-                userId, req.reaction(), "removed", remaining);
+                userId, req.reaction(), "removed", remaining);*/
     }
 
     // =========================================================================
@@ -174,7 +214,7 @@ public final class ReactionHandler implements StanzaHandler {
 
     /**
      * Broadcasts a reaction event to all conversation participants.
-     *
+     * <p>
      * For DMs: sender and recipient
      * For groups: all group members
      */
@@ -220,11 +260,11 @@ public final class ReactionHandler implements StanzaHandler {
                                               String reaction) {
         String sql = """
             INSERT INTO message_reactions (message_id, user_id, reaction, created_at)
-            SELECT ?::uuid, ?, ?, NOW()
+            SELECT ?, ?, ?, NOW()
             WHERE (
                 SELECT COUNT(DISTINCT reaction)
                 FROM message_reactions
-                WHERE message_id = ?::uuid
+                WHERE message_id = ?
             ) < ?
             ON CONFLICT (message_id, user_id, reaction) DO NOTHING
             """;
@@ -232,7 +272,7 @@ public final class ReactionHandler implements StanzaHandler {
         String countSql = """
             SELECT COUNT(*) AS total
             FROM message_reactions
-            WHERE message_id = ?::uuid AND reaction = ?
+            WHERE message_id = ? AND reaction = ?
             """;
 
         try (Connection conn = pool.getConnection()) {
@@ -241,7 +281,7 @@ public final class ReactionHandler implements StanzaHandler {
             // (one reaction type per user per message)
             try (PreparedStatement del = conn.prepareStatement(
                     "DELETE FROM message_reactions " +
-                    "WHERE message_id = ?::uuid AND user_id = ?")) {
+                    "WHERE message_id = ? AND user_id = ?")) {
                 del.setString(1, messageId);
                 del.setString(2, userId);
                 del.executeUpdate();
@@ -395,6 +435,7 @@ public final class ReactionHandler implements StanzaHandler {
         String action    = null;
         String messageId = null;
         String reaction  = null;
+        String to        = null;
 
         try {
             int depth = 1;
@@ -411,6 +452,7 @@ public final class ReactionHandler implements StanzaHandler {
                         action    = getAttr(se, "action");
                         messageId = getAttr(se, "message_id");
                         reaction  = getAttr(se, "reaction");
+                        to        = getAttr(se, "to");
                     }
                 }
 
@@ -421,7 +463,7 @@ public final class ReactionHandler implements StanzaHandler {
             return null;
         }
 
-        return new ReactionRequest(action, messageId, reaction);
+        return new ReactionRequest(action, to, messageId, reaction);
     }
 
     private String getAttr(StartElement el, String name) {
@@ -458,6 +500,7 @@ public final class ReactionHandler implements StanzaHandler {
 
     private record ReactionRequest(
             String action,
+            String to,
             String messageId,
             String reaction
     ) {}

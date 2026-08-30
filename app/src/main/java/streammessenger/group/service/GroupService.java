@@ -1,5 +1,6 @@
 package streammessenger.group.service;
 
+import streammessenger.group.handler.GroupStanzaHandler;
 import streammessenger.group.model.*;
 import streammessenger.group.repository.GroupRepository;
 
@@ -338,12 +339,14 @@ public final class GroupService {
                                 String avatarUrl) {
 
         GroupMember actor = repository.getMember(groupId, actorUserId);
+
         if (actor == null) {
             throw new GroupException(GroupException.Code.NOT_MEMBER,
                     "Not a member");
         }
 
         GroupSettings settings = repository.getSettings(groupId);
+
         if (settings.onlyAdminsCanEditInfo() && !actor.canModerate()) {
             throw new GroupException(GroupException.Code.NOT_AUTHORIZED,
                     "Only admins can edit group info");
@@ -361,6 +364,8 @@ public final class GroupService {
         long newVersion = repository.updateMetadata(
                 groupId, actorUserId, name, description, avatarUrl);
 
+        logger.info("The updated version is: "+newVersion);
+
         if (newVersion > 0) {
             notifier.notifyMetadataChanged(groupId, newVersion,
                     actorUserId, name, description, avatarUrl);
@@ -370,7 +375,6 @@ public final class GroupService {
     // =========================================================================
     // Update settings
     // =========================================================================
-
     public void updateSettings(String groupId, String actorUserId,
                                 GroupSettings settings) {
         GroupMember actor = repository.getMember(groupId, actorUserId);
@@ -385,6 +389,68 @@ public final class GroupService {
         if (newVersion > 0) {
             notifier.notifySettingsChanged(groupId, newVersion,
                     actorUserId, settings);
+        }
+    }
+
+    public void updateSettingsDelta(String groupId, String actorUserId,
+                                    GroupStanzaHandler.ParsedGroupIQ parsedGroupIQ) {
+        GroupMember actor = repository.getMember(groupId, actorUserId);
+        if (actor == null || !actor.canModerate()) {
+            throw new GroupException(GroupException.Code.NOT_AUTHORIZED,
+                    "Only admins can change settings");
+        }
+
+        long newVersion = repository.updateSettingsDelta(
+                groupId, actorUserId, parsedGroupIQ);
+
+        if (newVersion > 0) {
+            /*notifier.notifySettingsChanged(groupId, newVersion,
+                    actorUserId, settings);*/
+        }
+    }
+
+    public void updateOnlyAdminCanEditInfo(String groupId, String actorUserId, boolean state) {
+        GroupMember actor = repository.getMember(groupId, actorUserId);
+
+        if (actor == null || !actor.canModerate()) {
+            throw new GroupException(GroupException.Code.NOT_AUTHORIZED,
+                    "Only admins can change settings");
+        }
+
+        long newVersion = repository.updateOnlyAdminCanEditInfo(groupId, actorUserId, state);
+
+        if(newVersion > 0){
+            notifier.notifyOnlyAdminCanEditSettings(groupId, actorUserId, state);
+        }
+    }
+
+    public void updateOnlyAdminCanSendMessage(String groupId, String actorUserId, boolean state) {
+        GroupMember actor = repository.getMember(groupId, actorUserId);
+
+        if (actor == null || !actor.canModerate()) {
+            throw new GroupException(GroupException.Code.NOT_AUTHORIZED,
+                    "Only admins can change settings");
+        }
+
+        long newVersion = repository.updateOnlyAdminCanSendMessage(groupId, actorUserId, state);
+
+        if(newVersion > 0){
+            notifier.notifyOnlyAdminCanSendSettings(groupId, actorUserId, state);
+        }
+    }
+
+    public void updateOnlyAdminCanAdd(String groupId, String actorUserId, boolean state) {
+        GroupMember actor = repository.getMember(groupId, actorUserId);
+
+        if (actor == null || !actor.canModerate()) {
+            throw new GroupException(GroupException.Code.NOT_AUTHORIZED,
+                    "Only admins can change settings");
+        }
+
+        long newVersion = repository.updateOnlyAdminCanSendMessage(groupId, actorUserId, state);
+
+        if(newVersion > 0){
+            notifier.notifyOnlyAdminCanAddSettings(groupId, actorUserId, state);
         }
     }
 }

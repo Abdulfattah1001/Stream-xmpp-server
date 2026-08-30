@@ -114,7 +114,7 @@ public final class GroupStanzaHandler implements StanzaHandler {
                                       XMLEventReader reader,
                                       Session session) {
 
-        String to        = getAttr(element, "to");
+        String to        = getAttr(element, "to"); // The groupId
         String type      = getAttr(element, "type");
         String messageId = getAttr(element, "id");
 
@@ -123,10 +123,11 @@ public final class GroupStanzaHandler implements StanzaHandler {
             return;
         }
 
-        String groupJid = bareJid(to);
+        String groupJid = bareJid(to); // gr_kjcqiv@conference.omnyrex.com
         String groupId  = groupJid.substring(0, groupJid.indexOf('@'));
 
         ParsedGroupMessage parsed = parseGroupMessage(reader);
+
         try {
             messageRouter.routeMessage(
                     groupId,
@@ -145,7 +146,7 @@ public final class GroupStanzaHandler implements StanzaHandler {
             // Echo confirmation to sender
             session.writeXML(String.format(
                 "<message id='%s' from='%s' to='%s' type='receipt'>" +
-                    "<received xmlns='urn:xmpp:receipts' id='%s'/>" +
+                    "<server-received xmlns='urn:xmpp:server:receipts' id='%s'/>" +
                 "</message>",
                 UUID.randomUUID(),
                 escapeXml(groupJid),
@@ -186,6 +187,9 @@ public final class GroupStanzaHandler implements StanzaHandler {
                 case "transfer_ownership" -> handleTransferOwnership(parsed, iqId, userId, session);
                 case "update_metadata"    -> handleUpdateMetadata(parsed, iqId, userId, session);
                 case "update_settings"    -> handleUpdateSettings(parsed, iqId, userId, session);
+                case "only_admins_edit"   -> handleOnlyAdminCanEditInfo(parsed, iqId, userId, session);
+                case "only_admins_send"   -> handleOnlyAdminCanSendMessage(parsed, iqId, userId, session);
+                case "only_admins_add"    -> handleOnlyAdminCanAdd(parsed, iqId, userId, session);
                 case "preview_link"       -> handleLinkPreview(parsed, iqId, userId, session);
                 case "create_link"        -> handleCreateLink(parsed, iqId, userId, session);
                 case "revoke_link"        -> handleRevokeLink(parsed, iqId, userId, session);
@@ -352,11 +356,13 @@ public final class GroupStanzaHandler implements StanzaHandler {
                                         String userId, Session session) {
         groupService.updateMetadata(p.groupId(), userId,
                 p.name(), p.description(), p.avatarUrl());
+
         session.writeXML(buildSuccessResult(iqId, "metadata_updated"));
     }
 
     private void handleUpdateSettings(ParsedGroupIQ p, String iqId,
                                         String userId, Session session) {
+
         GroupSettings settings = new GroupSettings(
                 p.onlyAdminsCanSend(),
                 p.onlyAdminsCanEditInfo(),
@@ -365,10 +371,25 @@ public final class GroupStanzaHandler implements StanzaHandler {
                 p.approvalRequired()
         );
 
-        groupService.updateSettings(p.groupId(), userId, settings);
+        //groupService.updateSettings(p.groupId(), userId, settings);
+        groupService.updateSettingsDelta(p.groupId(), userId, p);
         session.writeXML(buildSuccessResult(iqId, "settings_updated"));
     }
 
+    private void handleOnlyAdminCanEditInfo(ParsedGroupIQ p, String iqId, String userId, Session session){
+        groupService.updateOnlyAdminCanEditInfo(p.groupId(), userId, p.onlyAdminsCanEditInfo());
+        session.writeXML(buildSuccessResult(iqId, "settings_updated"));
+    }
+
+    private void handleOnlyAdminCanSendMessage(ParsedGroupIQ p, String iqId, String userId, Session session){
+        groupService.updateOnlyAdminCanSendMessage(p.groupId(), userId, p.onlyAdminsCanSend());
+        session.writeXML(buildSuccessResult(iqId, "settings_updated"));
+    }
+
+    private void handleOnlyAdminCanAdd(ParsedGroupIQ p, String iqId, String userId, Session session){
+        groupService.updateOnlyAdminCanAdd(p.groupId(), userId, p.onlyAdminsCanAdd());
+        session.writeXML(buildSuccessResult(iqId, "settings_updated"));
+    }
     private void handleLinkPreview(ParsedGroupIQ p, String iqId, String userId, Session session){
         if(p.linkToken() == null){
             sendIQError(session, iqId, "bad-request");
@@ -691,7 +712,7 @@ public final class GroupStanzaHandler implements StanzaHandler {
                 mediaStorageKey, mimeType, fileSizeBytes);
     }
 
-    private ParsedGroupIQ parseGroupIQ(XMLEventReader reader) {
+    private ParsedGroupIQ parseGroupIQOld(XMLEventReader reader) {
         String action = null, groupId = null;
         String targetUserId = null, targetUserJid = null;
         String name = null, description = null, avatarUrl = null;
@@ -742,9 +763,9 @@ public final class GroupStanzaHandler implements StanzaHandler {
                         case "visibility"          -> visibility = readText(reader);
                         case "max_members"         -> maxMembers = parseIntSafe(readText(reader));
                         case "disappearing_seconds" -> disappearingSeconds = parseIntSafe(readText(reader));
-                        case "only_admins_can_send" -> onlyAdminsSend = parseBoolSafe(readText(reader));
-                        case "only_admins_can_edit_info" -> onlyAdminsEdit = parseBoolSafe(readText(reader));
-                        case "only_admins_can_add" -> onlyAdminsAdd = parseBoolSafe(readText(reader));
+                        case "only_admins_can_send", "only_admins_send" -> onlyAdminsSend = parseBoolSafe(readText(reader));
+                        case "only_admins_can_edit_info", "only_admins_meta" -> onlyAdminsEdit = parseBoolSafe(readText(reader));
+                        case "only_admins_can_add", "only_admins_add" -> onlyAdminsAdd = parseBoolSafe(readText(reader));
                         case "approval_required"   -> approvalRequired = parseBoolSafe(readText(reader));
                     }
                     depth--;
@@ -764,6 +785,81 @@ public final class GroupStanzaHandler implements StanzaHandler {
                 approvalRequired,
                 knownVersions,
                 lastSequences
+        );
+    }
+
+    private ParsedGroupIQ parseGroupIQ(XMLEventReader reader) {
+        String action = null, groupId = null;
+        String targetUserId = null, targetUserJid = null;
+        String name = null, description = null, avatarUrl = null;
+        String linkToken = null, visibility = null;
+
+        // Change primitives to Nullable Objects 🌟
+        Integer maxMembers = null, disappearingSeconds = null;
+        Boolean onlyAdminsSend = null, onlyAdminsEdit = null, onlyAdminsAdd = null, approvalRequired = null;
+
+        Map<String, Long> knownVersions = new HashMap<>();
+        Map<String, Long> lastSequences = new HashMap<>();
+
+        try {
+            int depth = 1;
+            while (reader.hasNext() && depth > 0) {
+                XMLEvent event = reader.nextEvent();
+
+                if (event.isStartElement()) {
+                    depth++;
+                    StartElement se = event.asStartElement();
+                    String elName = se.getName().getLocalPart();
+                    String ns = se.getName().getNamespaceURI();
+
+                    if ("group".equals(elName) && GROUP_NS.equals(ns)) {
+                        action = getAttr(se, "action");
+                    }
+
+                    /*if ("known".equals(elName)) {
+                        String gid = getAttr(se, "group_id");
+                        String ver = getAttr(se, "version");
+                        String sequence = getAttr(se, "seq");
+                        if (gid != null && ver != null && sequence != null) {
+                            try {
+                                knownVersions.put(gid, Long.parseLong(ver));
+                                lastSequences.put(gid, Long.parseLong(sequence));
+                            } catch (NumberFormatException ignored) {}
+                        }
+                    }*/
+
+                    logger.info("Element name: "+elName);
+                    switch (elName) {
+                        case "group_id"            -> groupId = readText(reader);
+                        case "target_user_id"      -> targetUserId = readText(reader);
+                        case "target_user_jid"     -> targetUserJid = readText(reader);
+                        case "name"                -> name = readText(reader);
+                        case "description"         -> description = readText(reader);
+                        case "avatar_url"          -> avatarUrl = readText(reader);
+                        case "token"               -> linkToken = readText(reader);
+                        case "visibility"          -> visibility = readText(reader);
+                        case "max_members"         -> maxMembers = parseIntSafe(readText(reader));
+                        case "disappearing_seconds" -> disappearingSeconds = parseIntSafe(readText(reader));
+                        case "only_admins_can_send", "only_admins_send" -> onlyAdminsSend = parseBoolSafe(readText(reader));
+                        case "only_admins_can_edit_info","only_admins_edit", "only_admins_meta" -> onlyAdminsEdit = parseBoolSafe(readText(reader));
+                        case "only_admins_can_add", "only_admins_add" -> onlyAdminsAdd = parseBoolSafe(readText(reader));
+                        case "approval_required"   -> approvalRequired = parseBoolSafe(readText(reader));
+                    }
+                    depth--;
+                }
+                if (event.isEndElement()) depth--;
+            }
+        } catch (XMLStreamException e) {
+            logger.warning("parseGroupIQ: " + e.getMessage());
+            return null;
+        }
+
+        return new ParsedGroupIQ(
+                action, groupId, targetUserId, targetUserJid,
+                name, description, avatarUrl, linkToken, visibility,
+                maxMembers, disappearingSeconds,
+                onlyAdminsSend, onlyAdminsEdit, onlyAdminsAdd,
+                approvalRequired, knownVersions, lastSequences
         );
     }
 
@@ -907,7 +1003,17 @@ public final class GroupStanzaHandler implements StanzaHandler {
             long fileSizeBytes
     ) {}
 
-    private record ParsedGroupIQ(
+    public record ParsedGroupIQ(
+            String action, String groupId, String targetUserId, String targetUserJid,
+            String name, String description, String avatarUrl, String linkToken, String visibility,
+            Integer maxMembers, Integer disappearingSeconds,
+            Boolean onlyAdminsCanSend, Boolean onlyAdminsCanEditInfo, Boolean onlyAdminsCanAdd,
+            Boolean approvalRequired,
+            Map<String, Long> knownVersions,
+            Map<String, Long> lastSequence
+    ) {}
+
+    private record ParsedGroupIQOld(
             String action,
             String groupId,
             String targetUserId,

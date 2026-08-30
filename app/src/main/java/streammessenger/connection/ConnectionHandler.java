@@ -92,6 +92,53 @@ public final class ConnectionHandler implements Runnable {
      * Drives the full connection state machine.
      */
     private void runConnectionLifecycle(Session session) {
+        String remoteAddr = socket.getInetAddress().getHostAddress();
+
+        // Check if the connection comes from local Nginx reverse proxy
+        boolean isProxyTls = "127.0.0.1".equals(remoteAddr) || "0:0:0:0:0:0:0:1".equals(remoteAddr);
+
+        if (isProxyTls) {
+            // Option A: Nginx already terminated TLS at the edge!
+            // Move directly to STARTTLS_NEGOTIATED so SASL features are advertised immediately.
+            session.setSessionState(SessionState.STARTTLS_NEGOTIATED);
+            session.setProxyTls(true);
+            logger.info("Nginx proxy TLS connection");
+            try {
+                processStream(session);
+            } catch (StartTLSException nested) {
+                logger.warning("Unexpected STARTTLS from proxy connection sessionId=" + sessionId);
+                session.writeStreamError(
+                        StreamException.Condition.POLICY_VIOLATION,
+                        "TLS already terminated by proxy"
+                );
+            }
+        } else {
+            logger.info("Direct connectioin on port 222");
+            // Fallback: Direct connection on 5222 requires standard in-band STARTTLS
+            try {
+                // Phase 1: Plain stream - expect STARTTLS
+                session.setSessionState(SessionState.STREAM_OPENED);
+                processStream(session);
+
+            } catch (StartTLSException e) {
+                // Phase 2: TLS upgrade
+                SSLSocket sslSocket = performTLSUpgrade(session);
+                if (sslSocket == null) return;
+
+                // Phase 3: TLS stream - expect SASL auth then stanza exchange
+                try {
+                    processStream(session);
+                } catch (StartTLSException nested) {
+                    logger.warning("Nested STARTTLS attempt sessionId=" + sessionId);
+                    session.writeStreamError(
+                            StreamException.Condition.POLICY_VIOLATION,
+                            "STARTTLS already negotiated"
+                    );
+                }
+            }
+        }
+    }
+    private void runConnectionLifecycleLegacy(Session session) {
         try {
             // Phase 1: Plain stream - expect STARTTLS
             session.setSessionState(SessionState.STREAM_OPENED);
@@ -198,7 +245,7 @@ public final class ConnectionHandler implements Runnable {
      * After STARTTLS: read from SSLSocket.
      * Before STARTTLS: read from plain socket.
      */
-    private InputStream resolveInputStream(Session session) {
+    private InputStream resolveInputStreamLegacy(Session session) {
         try {
             if (session.getSessionState() == SessionState.STARTTLS_NEGOTIATED
                     || session.getSessionState() == SessionState.AUTHENTICATED) {
@@ -216,6 +263,28 @@ public final class ConnectionHandler implements Runnable {
         return null;
     }
 
+    /**
+     * Returns the appropriate InputStream for the current session state.
+     * - If upgraded in-band locally: read from SSLSocket.
+     * - If proxied via Nginx or plain TCP: read from plain Socket.
+     */
+    private InputStream resolveInputStream(Session session) {
+        try {
+            // 1. In-band STARTTLS mode: read from the upgraded SSLSocket if present
+            SSLSocket ssl = session.getSSLSocket();
+            if (ssl != null && !ssl.isClosed()) {
+                return ssl.getInputStream();
+            }
+
+            // 2. Proxy TLS mode (Nginx) OR initial plain TCP stream: read from underlying socket
+            if (!socket.isClosed()) {
+                return socket.getInputStream();
+            }
+        } catch (IOException e) {
+            logger.warning("Cannot get InputStream for session=" + sessionId + ": " + e.getMessage());
+        }
+        return null;
+    }
     /**
      * Creates an XMLInputFactory with external entity processing disabled.
      * This prevents XXE (XML External Entity) attacks.

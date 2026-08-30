@@ -12,8 +12,8 @@ import java.util.List;
 import java.util.UUID;
 import java.util.logging.Logger;
 
+import streammessenger.api.SimpleJson;
 import streammessenger.db.DatabaseManager;
-import streammessenger.group.repository.GroupRepository;
 import streammessenger.session.Session;
 import streammessenger.session.SessionRegistry;
 
@@ -31,6 +31,7 @@ public final class PresenceHandler implements StanzaHandler {
 
     private static final String RECEIPTS_NS = "urn:xmpp:receipts";
     private static final String E2EE_NS     = "urn:xmpp:e2ee:0";
+    private static final String CRDT_NS = "urn:xmpp:crdt-note:0";
     private final DatabaseManager db;
 
     public PresenceHandler(SessionRegistry registry, DatabaseManager db) {
@@ -51,7 +52,6 @@ public final class PresenceHandler implements StanzaHandler {
         String presenceXml = buildPresenceStanza(session.getJid(), type, show);
 
         // Broadcast to all authenticated sessions (excluding sender)
-        logger.info("Broadcasting the current user session presence: "+session.getJid());
         int broadcast = 0;
         for (Session other : registry.getAllSessions()) {
             if (!other.getSessionId().equals(session.getSessionId()) && other.isAuthenticated()) {
@@ -64,44 +64,8 @@ public final class PresenceHandler implements StanzaHandler {
                 + " to " + broadcast + " sessions");
         deliverPendingItems(session);
 
-        // TODO: Fetch the last ULID received by the client from the server
-        /*List<GroupRepository.UnifiedTimelineItem> offlineMessages = db.getUnifiedTimelineDelta(session.getUid(), "00000000000000000000000000", 100);
-
-        if(!offlineMessages.isEmpty()) {
-            for(GroupRepository.UnifiedTimelineItem entity : offlineMessages){
-                String eventType  = entity.eventType();
-                String category = entity.eventCategory();
-                switch (category){
-                    case "chat" ->  {
-                        logger.info("Chat Message ["+entity.encryptedContent()+"]");
-                        String messageId = entity.eventRefId();
-                        String senderId = entity.senderId();
-                        String encryptedContent = entity.encryptedContent();
-                        String contentType = entity.eventType();
-                    }
-                    case "groupchat" -> {
-                        String messageId = entity.eventRefId();
-                        String groupId = entity.groupId();
-                        String sender = entity.senderId();
-                        String content = entity.encryptedContent();
-                        String xml = String.format("<message id='%s' type='groupchat' from='%s'>" +
-                                "<body>%s</body>" +
-                                "</message>", messageId, groupId+"@conference.omnyrex.com/"+sender, content);
-                        session.writeXML(xml);
-                    }
-                    case "system" -> {
-                        logger.info("System Events ["+entity.encryptedContent()+"]");
-                        String messageId = entity.eventRefId();
-                    }
-                }
-            }
-        }else {
-            logger.info("Events is empty");
-        }*/
-
         //TODO: serverContext.getSenderKeyManager().deliverMissedRotations(session, session.getContactId());
     }
-
 
     /**
      * After resource binding, deliver everything that was held for this user:
@@ -121,6 +85,147 @@ public final class PresenceHandler implements StanzaHandler {
 
         // 3. Deliver offline receipts
         deliverOfflineReceipts(session, contactId);
+
+        DatabaseManager.SyncBacklogResponse responses = db.getOptimizedSyncBacklog(session.getUid());
+
+        if(responses.groupSyncs() != null && !responses.groupSyncs().isEmpty()){
+            for(DatabaseManager.GroupSyncPayload payload : responses.groupSyncs()){
+                for(DatabaseManager.GroupEventDelta delta : payload.deltas()){
+                    String type = delta.eventType();
+                    SimpleJson json = SimpleJson.parse(delta.payload());
+                    long createdAt = delta.createdAt();
+                    switch (type){
+                        case "metadata_changed", "description_changed":
+                            session.writeXML(String.format("""
+                            <message id='%s' to='%s' from='%s' type='%s'>
+                                <system xmlns='urn:xmpp:group:0' timestamp='%b'>
+                                    <event type='description_changed' actor='%s'>
+                                        <description>%s</description>
+                                    </event>
+                                </system>
+                            </message>
+                            """, delta.eventId(), session.getResource(), payload.groupId()+"/"+delta.actorUid(), "groupchat", createdAt,
+                                    delta.actorUid(), json.getString("description")));
+                            break;
+                        case "name_changed":
+                            session.writeXML(String.format("""
+                            <message id='%s' to='%s' from='%s' type='%s'>
+                                <system xmlns='urn:xmpp:group:0' timestamp='%b'>
+                                    <event type='name_changed' actor='%s'>
+                                        <name>%s</name>
+                                    </event>
+                                </system>
+                            </message>
+                            """, delta.eventId(), session.getResource(), payload.groupId()+"/"+delta.actorUid(), "groupchat", createdAt,
+                                    delta.actorUid(), json.getString("name")));
+                            break;
+                        case "avatar_changed":
+                            session.writeXML(String.format("""
+                            <message id='%s' to='%s' from='%s' type='%s'>
+                                <system xmlns='urn:xmpp:group:0' timestamp='%b'>
+                                    <event type='avatar_changed' actor='%s'>
+                                        <avatar_url>%s</avatar_url>
+                                    </event>
+                                </system>
+                            </message>
+                            """, delta.eventId(), session.getResource(), payload.groupId()+"/"+delta.actorUid(), "groupchat", createdAt,
+                                    delta.actorUid(), json.getString("avatar_url")));
+                            break;
+                        case "member_joined_via_link":
+                            session.writeXML(String.format("""
+                            <message id='%s' to='%s' from='%s' type='%s'>
+                                <system xmlns='urn:xmpp:group:0' timestamp='%b'>
+                                    <event type='member_joined_via_link' actor='%s' subject='%s'>
+                                        <member user_id='' jid='' avatar_url='' display_name='' display_status='' phone_number=''>%s</member>
+                                    </event>
+                                </system>
+                            </message>
+                            """, delta.eventId(), session.getResource(), payload.groupId()+"/"+delta.actorUid(), "groupchat", createdAt,
+                                    delta.actorUid(), delta.targetUid(),json.getString("avatar_url")));
+                            break;
+                        case "only_admins_edit":
+                            String xml = String.format("""
+                                    <message id='%s' to='%s' from='%s' type='%s'>
+                                        <system xmlns='urn:xmpp:group:0' timestamp='%b'>
+                                            <event type='only_admins_can_edit_info' actor='%s' subject='%s'>
+                                               <state>%b</state>
+                                            </event>
+                                        </system>
+                                    </message>
+                                    """,
+                                    delta.eventId(), session.getJid(), payload.groupId() +"/"+delta.actorUid(), "groupchat", createdAt,
+                                    delta.actorUid(), delta.targetUid(), json.getBoolean("only_admins_edit"));
+                            session.writeXML(xml);
+                            break;
+                        case "only_admins_send":
+                            String xml1 = String.format("""
+                                    <message id='%s' to='%s' from='%s' type='%s'>
+                                        <system xmlns='urn:xmpp:group:0' timestamp='%b'>
+                                            <event type='only_admins_can_send_message' actor='%s' subject='%s'>
+                                               <state>%b</state>
+                                            </event>
+                                        </system>
+                                    </message>
+                                    """,
+                                    delta.eventId(), session.getJid(), payload.groupId() +"/"+delta.actorUid(), "groupchat",createdAt,
+                                    delta.actorUid(), delta.targetUid(), json.getBoolean("only_admins_send"));
+                            logger.info(xml1);
+                            session.writeXML(xml1);
+                            break;
+                    }
+                    // Updates the last sync version for the user to prevent resending of already sent events
+                    db.updateGroupMemberLastSyncVersion(session.getUid(), payload.groupId(), payload.latestServerVersion());
+                }
+            }
+        }
+
+        // 5. Deliver pending event items
+        List<DatabaseManager.OfflineMailEvent> events = db.getOfflineMailEvents(session.getUid());
+        if(events.isEmpty()){
+            logger.info("Mail event is empty");
+        }else{
+            for(DatabaseManager.OfflineMailEvent event: events){
+                String id = UUID.randomUUID().toString();
+                SimpleJson json = SimpleJson.parse(event.payload());
+                StringBuilder sb = new StringBuilder(String.format("<message from='%s' to='%s' id='%s'>", event.senderId(), session.getJid(), id));
+                sb.append("<event xmlns='http://jabber.org/protocol/pubsub#event'>");
+                sb.append("<items node='urn:xmpp:profile-metadata'>");
+                sb.append("<item id='current'>");
+                sb.append("<profile xmlns='metadata:ns'>");
+                if(json.hasKey("avatar_url")) sb.append(String.format("<avatar_url>%s</avatar_url>", json.getString("avatar_url")));
+                if(json.hasKey("bio")) sb.append(String.format("<bio>%s</bio>", json.getString("bio")));
+                if(json.hasKey("display_name")) sb.append(String.format("<display_name>%s</display_name>", json.getString("display_name")));
+                sb.append("</profile>");
+                sb.append("</item>");
+                sb.append("</items>");
+                sb.append("</event>");
+                sb.append("</message>");
+
+                String xml = sb.toString();
+                logger.info("Final xml stanza to sent is: "+xml);
+                session.writeXML(xml);
+            }
+        }
+
+        /*List<DatabaseManager.Note> notes = db.fetchUserNotes(session.getUid());
+
+        if(notes.isEmpty()){
+            logger.info("Notes is empty for this user");
+        }else{
+            for(DatabaseManager.Note nt : notes){
+                session.writeXML(String.format("""
+                        <message type='crdt'>
+                        <crdt xmlns='%s' action='invited'>
+                        <note_id>%s</note_id>
+                        <title>%s</title>
+                        <inviter>%s</inviter>
+                        <conversation_id>%s</conversation_id>
+                        </crdt>
+                        </message>
+                        """, CRDT_NS, nt.noteId(), nt.title(), nt.creatorId(), nt.conversationId()));
+            }
+        }*/
+
     }
 
     /**
@@ -223,7 +328,9 @@ public final class PresenceHandler implements StanzaHandler {
     }
 
     private void deliverOfflineReceipts(Session session, String contactId){
-        List<DatabaseManager.OfflineReceipt> receipts = db.getOfflineReceipt(contactId);
+        String id = contactId;
+        if(contactId.contains("@")) id = contactId.split("@")[0];
+        List<DatabaseManager.OfflineReceipt> receipts = db.getOfflineReceipt(id);
 
         if (receipts.isEmpty()) return;
 
@@ -316,7 +423,7 @@ public final class PresenceHandler implements StanzaHandler {
         if (show != null) sb.append("<show>").append(show).append("</show>");
         if (idleSince != null) {
             sb.append("<idle xmlns='urn:xmpp:idle:1' since='")
-                    .append(idleSince.toString())
+                    .append(idleSince)
                     .append("'/>");
         }
         sb.append("</presence>");

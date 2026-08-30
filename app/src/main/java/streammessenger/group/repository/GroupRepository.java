@@ -3,6 +3,7 @@ package streammessenger.group.repository;
 import com.github.f4b6a3.ulid.UlidCreator;
 
 import streammessenger.db.ConnectionPool;
+import streammessenger.group.handler.GroupStanzaHandler;
 import streammessenger.group.model.*;
 import streammessenger.muc.model.GroupEventType;
 
@@ -1154,6 +1155,7 @@ public final class GroupRepository {
     public long updateMetadata(String groupId, String actorUserId,
                                 String name, String description,
                                 String avatarUrl) {
+
         Connection conn = null;
         try {
             conn = pool.getConnection();
@@ -1192,6 +1194,7 @@ public final class GroupRepository {
 
             long newVersion = incrementVersion(conn, groupId);
 
+
             String payload = String.format(
                 "{%s%s%s}",
                 name != null ? "\"name\":\"" + escapeJson(name) + "\"," : "",
@@ -1201,7 +1204,12 @@ public final class GroupRepository {
                         + escapeJson(avatarUrl) + "\"" : ""
             ).replace(",}", "}");
 
-            insertEvent(conn, groupId, newVersion, "metadata_changed",
+            String eventType = "metadata_changed";
+
+            if(name != null) eventType = "name_changed";
+            if(description != null) eventType = "description_changed";
+            if(avatarUrl != null) eventType = "avatar_changed";
+            insertEvent(conn, groupId, newVersion, eventType,
                     actorUserId, null, payload);
 
             conn.commit();
@@ -1267,6 +1275,221 @@ public final class GroupRepository {
         } finally {
             close(conn);
         }
+    }
+
+    public long updateSettingsDelta(String groupId, String actorUserId, GroupStanzaHandler.ParsedGroupIQ incoming) {
+        Connection conn = null;
+        try {
+            conn = pool.getConnection();
+            conn.setAutoCommit(false);
+
+            // 1. Fetch current database states using row-level locking to avoid race conditions
+            GroupSettings current = fetchGroupSettingsForUpdate(conn, groupId);
+            if (current == null) {
+                throw new RuntimeException("Group settings row missing");
+            }
+
+            // 2. Build the merged state and track exactly what changed
+            boolean onlyAdminsSend = incoming.onlyAdminsCanSend() != null ? incoming.onlyAdminsCanSend() : current.onlyAdminsCanSend();
+            boolean onlyAdminsEdit = incoming.onlyAdminsCanEditInfo() != null ? incoming.onlyAdminsCanEditInfo() : current.onlyAdminsCanEditInfo();
+            boolean onlyAdminsAdd  = incoming.onlyAdminsCanAdd() != null  ? incoming.onlyAdminsCanAdd()  : current.onlyAdminsCanAdd();
+            int disappearingSecs   = incoming.disappearingSeconds() != null ? incoming.disappearingSeconds() : current.disappearingSeconds();
+            boolean approvalReq    = incoming.approvalRequired() != null ? incoming.approvalRequired() : current.approvalRequired();
+
+            // 3. Update the database record with the clean, merged dataset
+            String sql = """
+            UPDATE group_settings SET
+                only_admins_can_send      = ?,
+                only_admins_can_edit_info = ?,
+                only_admins_can_add       = ?,
+                disappearing_seconds      = ?,
+                approval_required         = ?,
+                updated_by_user_id        = ?
+            WHERE group_id = ?
+            """;
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setBoolean(1, onlyAdminsSend);
+                stmt.setBoolean(2, onlyAdminsEdit);
+                stmt.setBoolean(3, onlyAdminsAdd);
+                stmt.setInt(4, disappearingSecs);
+                stmt.setBoolean(5, approvalReq);
+                stmt.setString(6, actorUserId);
+                stmt.setString(7, groupId);
+                stmt.executeUpdate();
+            }
+
+            // 4. Sequence Version tracking increments natively
+            long newVersion = incrementVersion(conn, groupId);
+
+            // 5. Narrow down our historic audit logging to focus ONLY on the explicit mutation
+            String eventType = "settings_changed";
+            String eventPayload = "";
+
+            if (incoming.onlyAdminsCanSend() != null) {
+                eventType = "settings_only_admins_send";
+                eventPayload = String.valueOf(onlyAdminsSend);
+            } else if (incoming.onlyAdminsCanEditInfo() != null) {
+                eventType = "settings_only_admins_meta";
+                eventPayload = String.valueOf(onlyAdminsEdit);
+            } else if (incoming.onlyAdminsCanAdd() != null) {
+                eventType = "settings_only_admins_add";
+                eventPayload = String.valueOf(onlyAdminsAdd);
+            } else if (incoming.disappearingSeconds() != null) {
+                eventType = "settings_disappearing_seconds";
+                eventPayload = String.valueOf(disappearingSecs);
+            } else if (incoming.approvalRequired() != null) {
+                eventType = "settings_approval_required";
+                eventPayload = String.valueOf(approvalReq);
+            }
+
+            // Save our precise, lightweight historical action row to the timeline log
+            insertEvent(conn, groupId, newVersion, eventType, actorUserId, null, eventPayload);
+
+            conn.commit();
+            return newVersion;
+
+        } catch (SQLException e) {
+            rollback(conn);
+            throw new RuntimeException("Failed to patch group settings safely", e);
+        } finally {
+            close(conn);
+        }
+    }
+
+    public long updateOnlyAdminCanEditInfo(String groupId, String actorUserId,
+                               boolean state) {
+        Connection conn = null;
+        try {
+            conn = pool.getConnection();
+            conn.setAutoCommit(false);
+
+            String sql = """
+                UPDATE group_settings SET
+                    only_admins_can_edit_info = ?
+                WHERE group_id = ?
+                """;
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setBoolean(1, state);
+                stmt.setString(2, groupId);
+                stmt.executeUpdate();
+            }
+
+            long newVersion = incrementVersion(conn, groupId);
+
+            String payload = String.format(
+                    "{\"only_admins_edit\":%b}",
+                    state
+            );
+            insertEvent(conn, groupId, newVersion, "only_admins_edit",
+                    actorUserId, null, payload);
+
+            conn.commit();
+            return newVersion;
+
+        } catch (SQLException e) {
+            rollback(conn);
+            logger.info("Failed to update settings: "+e.getMessage());
+            throw new RuntimeException("Failed to update settings", e);
+        } finally {
+            close(conn);
+        }
+    }
+
+    public long updateOnlyAdminCanSendMessage(String groupId, String actorUserId,
+                                           boolean state) {
+        Connection conn = null;
+        try {
+            conn = pool.getConnection();
+            conn.setAutoCommit(false);
+
+            String sql = """
+                UPDATE group_settings SET
+                    only_admins_can_send = ?
+                WHERE group_id = ?
+                """;
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setBoolean(1, state);
+                stmt.setString(2, groupId);
+                stmt.executeUpdate();
+            }
+
+            long newVersion = incrementVersion(conn, groupId);
+
+            String payload = String.format(
+                    "{\"only_admins_send\":%b}",
+                    state
+            );
+            insertEvent(conn, groupId, newVersion, "only_admins_send",
+                    actorUserId, null, payload);
+
+            conn.commit();
+            return newVersion;
+
+        } catch (SQLException e) {
+            rollback(conn);
+            logger.info("Failed to update settings: "+e.getMessage());
+            throw new RuntimeException("Failed to update settings", e);
+        } finally {
+            close(conn);
+        }
+    }
+
+
+    public long updateOnlyAdminCanAdd(String groupId, String actorUserId,
+                                              boolean state) {
+        Connection conn = null;
+        try {
+            conn = pool.getConnection();
+            conn.setAutoCommit(false);
+
+            String sql = """
+                UPDATE group_settings SET
+                    only_admins_can_add = ?
+                WHERE group_id = ?
+                """;
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setBoolean(1, state);
+                stmt.setString(2, groupId);
+                stmt.executeUpdate();
+            }
+
+            long newVersion = incrementVersion(conn, groupId);
+
+            String payload = String.format(
+                    "{\"only_admins_add\":%b}",
+                    state
+            );
+            insertEvent(conn, groupId, newVersion, "only_admins_add",
+                    actorUserId, null, payload);
+
+            conn.commit();
+            return newVersion;
+
+        } catch (SQLException e) {
+            rollback(conn);
+            logger.info("Failed to update settings: "+e.getMessage());
+            throw new RuntimeException("Failed to update settings", e);
+        } finally {
+            close(conn);
+        }
+    }
+    private GroupSettings fetchGroupSettingsForUpdate(Connection conn, String groupId) throws SQLException {
+        String sql = "SELECT only_admins_can_send, only_admins_can_edit_info, only_admins_can_add, disappearing_seconds, approval_required FROM group_settings WHERE group_id = ? FOR UPDATE";
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, groupId);
+            try (ResultSet r = stmt.executeQuery()) {
+                if (r.next()) {
+                    return new GroupSettings(
+                            r.getBoolean("only_admins_can_send"),
+                            r.getBoolean("only_admins_can_edit_info"),
+                            r.getBoolean("only_admins_can_add"),
+                            r.getInt("disappearing_seconds"),
+                            r.getBoolean("approval_required")
+                    );
+                }
+            }
+        }
+        return null;
     }
 
     // =========================================================================
@@ -1391,6 +1614,7 @@ public final class GroupRepository {
                               long version, String eventType,
                               String actorUserId, String targetUserId,
                               String payload) throws SQLException {
+
         String sql = """
             INSERT INTO group_state_events (
                 event_id, group_id, state_version, event_type,

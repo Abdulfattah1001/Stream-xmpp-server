@@ -1,12 +1,16 @@
 package streammessenger.db;
 
 
+import org.slf4j.LoggerFactory;
+
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.sql.*;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.logging.Logger;
 
@@ -23,6 +27,7 @@ public final class DatabaseManager {
             Logger.getLogger(DatabaseManager.class.getName());
 
     private static final SecureRandom secureRandom = new SecureRandom();
+    private static final org.slf4j.Logger log = LoggerFactory.getLogger(DatabaseManager.class);
 
     private final ConnectionPool pool;
 
@@ -420,8 +425,20 @@ public final class DatabaseManager {
         }
     }
 
+    public Optional<String> getIdentityKey(String uid) {
+        String sql = "SELECT identity_key FROM signal_identity_bundles WHERE user_id = ?";
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setString(1, uid);
+            ResultSet rs = stmt.executeQuery();
+            if(rs.next()) return Optional.of(rs.getString("identity_key"));
+        } catch (SQLException e) {
+            logger.info("getIdentityKey error: "+e.getMessage());
+        }
+        return Optional.empty();
+    }
+
     public void updateUserLastSeen(String userId){
-        logger.info("Updating the user last seen: "+userId);
         String sql = "UPDATE users SET last_seen = UTC_TIMESTAMP() WHERE user_id = ?";
 
 
@@ -434,6 +451,20 @@ public final class DatabaseManager {
 
         } catch (SQLException e) {
             logger.warning("updateUserLastSeen error: " + e.getMessage());
+        }
+    }
+
+    public void updateGroupMemberLastSyncVersion(String userId, String groupId, int version) {
+        String sql = "UPDATE group_members SET last_synced_version = ? WHERE group_id = ? AND user_id = ?";
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setLong(1, version);
+            stmt.setString(2, groupId);
+            stmt.setString(3, userId);
+            int result = stmt.executeUpdate();
+            connection.commit();
+        } catch (SQLException e) {
+            logger.info("updateGroupMemberLastSyncVersion error: "+e.getMessage());
         }
     }
 
@@ -517,6 +548,174 @@ public final class DatabaseManager {
     public Optional<GroupController.ChatGroup> getGroup(String groupId){
         return Optional.empty();
     }
+
+    public List<String> getUserGroups(String userId){
+
+        List<String> groupIds = new ArrayList<>();
+
+        String sql = """
+                SELECT group_id, last_synced_version FROM group_members WHERE user_id = ?
+                """;
+
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setString(1, userId);
+
+            ResultSet r = stmt.executeQuery();
+            while (r.next()){
+                groupIds.add(r.getString("group_id"));
+            }
+        } catch (SQLException e) {
+            logger.info("getUserGroups error: "+e.getMessage());
+        }
+
+        return groupIds;
+    }
+
+    public Map<String, Integer> getGroupsNeedingSync(String userId) {
+        Map<String, Integer> groupsToSync = new HashMap<>();
+
+        // We join the membership table with the core groups table
+        // and filter out groups that are already perfectly up-to-date
+        String sql = """
+            SELECT m.group_id, m.last_synced_version
+            FROM group_members m
+            INNER JOIN `groups` g ON m.group_id = g.group_id
+            WHERE m.user_id = ? AND g.state_version > m.last_synced_version
+            INNER JOIN group_events AS ge WHERE ge.group_id = m.group_id
+            """;
+
+        try (Connection connection = pool.getConnection();
+             PreparedStatement stmt = connection.prepareStatement(sql)) {
+
+            stmt.setString(1, userId);
+
+            try (ResultSet r = stmt.executeQuery()) {
+                while (r.next()) {
+                    groupsToSync.put(
+                            r.getString("group_id"),
+                            r.getInt("last_synced_version")
+                    );
+                }
+            }
+        } catch (SQLException e) {
+            logger.severe("getGroupsNeedingSync error: " + e.getMessage());
+        }
+
+        return groupsToSync;
+    }
+
+    /**
+     * Dummy helper illustrating where you'd optionally pare down raw JSON structures
+     * on-the-fly before sending them out over XMPP.
+     */
+    private String extractChangedFieldsOnly(String rawJson) {
+        // E.g., Use Jackson/Gson to parse and return minimal mutations if necessary.
+        // If you already store field-level increments natively on write, just return it.
+        return rawJson;
+    }
+
+    public SyncBacklogResponse getOptimizedSyncBacklog(String userId) {
+        // Temp mapping: GroupID -> List of processed deltas
+        Map<String, List<GroupEventDelta>> deltaMap = new HashMap<>();
+        Map<String, Integer> serverVersions = new HashMap<>();
+
+        // Keep it fast: Join the index markers, look up target events chronologically
+        String sql = """
+                    SELECT
+                        m.group_id,
+                        g.state_version,
+                        ge.event_id,
+                        ge.event_type,
+                        ge.payload,
+                        ge.actor_user_id, -- The initiator of the event
+                        ge.target_user_id, -- The receiver of the event
+                        UNIX_TIMESTAMP(ge.created_at) as event_time
+                    FROM group_members m
+                    INNER JOIN `groups` g ON m.group_id = g.group_id
+                    INNER JOIN group_state_events ge ON m.group_id = ge.group_id
+                    WHERE m.user_id = ? AND g.state_version > m.last_synced_version
+                    -- THE OPTIMIZATION: Use the version sequence directly!
+                    AND ge.state_version > m.last_synced_version
+                    ORDER BY ge.state_version ASC;
+                    """;
+
+        try (Connection connection = pool.getConnection();
+             PreparedStatement stmt = connection.prepareStatement(sql)) {
+
+            stmt.setString(1, userId);
+
+            try (ResultSet r = stmt.executeQuery()) {
+                while (r.next()) {
+                    String groupId = r.getString("group_id");
+                    int currentServerVersion = r.getInt("state_version");
+                    String eventType = r.getString("event_type");
+                    String rawPayload = r.getString("payload");
+                    String actorUid = r.getString("actor_user_id"); // can be null
+                    String subjectUid = r.getString("target_user_id"); // can be null
+
+                    serverVersions.put(groupId, currentServerVersion);
+
+                    String processedPayload = rawPayload;
+
+                    if ("metadata_changed".equals(eventType)) {
+                        // If the payload contains the full historical settings dump,
+                        // compress it here to extract only the specific keys that mutated
+                        processedPayload = extractChangedFieldsOnly(rawPayload);
+                    }
+
+                    GroupEventDelta delta = new GroupEventDelta(
+                            r.getString("event_id"),
+                            actorUid,
+                            subjectUid,
+                            eventType,
+                            processedPayload,
+                            r.getLong("event_time")
+                    );
+
+                    deltaMap.computeIfAbsent(groupId, k -> new ArrayList<>()).add(delta);
+                }
+            }
+        } catch (SQLException e) {
+            logger.severe("getOptimizedSyncBacklog Database Error: " + e.getMessage());
+        }
+
+        // Convert our working map cleanly into our final structural DTO payload array
+        List<GroupSyncPayload> groupSyncList = new ArrayList<>();
+        for (Map.Entry<String, List<GroupEventDelta>> entry : deltaMap.entrySet()) {
+            String gId = entry.getKey();
+            groupSyncList.add(new GroupSyncPayload(
+                    gId,
+                    serverVersions.get(gId),
+                    entry.getValue()
+            ));
+        }
+
+        return new SyncBacklogResponse(userId, groupSyncList);
+    }
+
+    // 1. Represents an optimized, field-level event timeline record
+    public record GroupEventDelta(
+            String eventId,
+            String actorUid,
+            String targetUid,
+            String eventType,
+            String payload, // Contains ONLY changed fields for configs, or user info for membership
+            long createdAt
+    ) {}
+
+    // 2. Holds the final consolidated payload for a single group
+    public record GroupSyncPayload(
+            String groupId,
+            int latestServerVersion,
+            List<GroupEventDelta> deltas
+    ) {}
+
+    // 3. Top-level wrapper containing the entire synchronization state for the user session
+    public record SyncBacklogResponse(
+            String userId,
+            List<GroupSyncPayload> groupSyncs
+    ) {}
 
     public boolean isGroupAdmin(String groupId, String userId){
         return false;
@@ -985,6 +1184,71 @@ public final class DatabaseManager {
         }
     }
 
+    public record Note(
+            String noteId,
+            String title,
+            String conversationId,
+            String creatorId,
+            long updatedAt
+    ){}
+
+    public List<Note> fetchUserNotes(String userId) {
+        logger.info("Fetching notes foruser : "+userId);
+        List<Note> notes = new ArrayList<>();
+        String sql = """
+            SELECT
+                nm.note_id,
+                nm.title,
+                nm.conversation_jid,
+                nm.creator_user_id,
+                nm.updated_at
+            FROM note_metadata nm
+            INNER JOIN note_participants np
+                ON np.note_id = nm.note_id
+               AND np.user_id = ?
+            WHERE nm.deleted_at IS NULL
+            ORDER BY nm.updated_at DESC
+            """;
+
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setString(1,  userId);
+            ResultSet rs = stmt.executeQuery();
+            while(rs.next()){
+
+                notes.add(
+                        new Note(rs.getString("note_id"),
+                                rs.getString("title"),
+                                rs.getString("conversation_jid"),
+                                rs.getString("creator_user_id"),
+                                rs.getTimestamp("updated_at").toInstant().toEpochMilli()));
+            }
+
+            return notes;
+        } catch (SQLException e) {
+            logger.info("fetchUserNotes error: "+e.getMessage());
+        }
+
+        return notes;
+    }
+
+    public List<String> getContacts(String uid){
+        List<String> uids = new ArrayList<>();
+        String sql = "SELECT contact_uid FROM contacts_relationships WHERE owner_uid = ?";
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setString(1, uid);
+
+            ResultSet rs = stmt.executeQuery();
+            while(rs.next()){
+                uids.add(rs.getString("contact_uid"));
+            }
+        } catch (SQLException e) {
+            logger.info("getContacts error: "+e.getMessage());
+        }
+        return uids;
+    }
+
     // =========================================================================
     // Audit Log
     // =========================================================================
@@ -1024,7 +1288,6 @@ public final class DatabaseManager {
 
     // =========================================================================
     // Existing methods (offline messages, roster, etc.)
-    // kept from previous implementation
     // =========================================================================
 
     public Optional<String> authenticateUser(String userId, String token) {
@@ -1351,26 +1614,6 @@ public final class DatabaseManager {
 
         List<PendingSubscription> result = new ArrayList<>();
 
-        /*try (Connection conn = pool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-
-            stmt.setString(1, toJid);
-
-            try (ResultSet rs = stmt.executeQuery()) {
-                while (rs.next()) {
-                    result.add(new PendingSubscription(
-                            rs.getString("from_jid"),
-                            rs.getString("type"),
-                            rs.getTimestamp("created_at")
-                    ));
-                }
-            }
-            conn.commit();
-
-        } catch (SQLException e) {
-            logger.severe("fetchPendingSubscriptions error: " + e.getMessage());
-        }*/
-
         return result;
     }
 
@@ -1485,6 +1728,65 @@ public final class DatabaseManager {
             logger.severe("upsertPrivacy error: " + e.getMessage());
             return false;
         }
+    }
+
+
+    // =================================================================
+    // Profile Changed Helpers
+    // ================================================================
+    public boolean changeAvatarUrl(String uid, String avatarUrl){
+        String sql = "UPDATE users SET avatar_url = ? WHERE user_id = ?";
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement(sql);
+
+            stmt.setString(1, avatarUrl);
+            stmt.setString(2, uid);
+
+            int rs = stmt.executeUpdate();
+            connection.commit();
+
+            return rs > 0;
+        } catch (SQLException e) {
+            logger.info("changeAvatarUrl error: "+e.getMessage());
+        }
+
+        return false;
+    }
+
+    public boolean changeDisplayName(String uid, String displayName){
+        String sql = "UPDATE users SET display_name = ? WHERE user_id = ?";
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement(sql);
+
+            stmt.setString(1, displayName);
+            stmt.setString(2, uid);
+
+            int rs = stmt.executeUpdate();
+
+            connection.commit();
+
+            return rs > 0;
+        } catch (SQLException e) {
+            logger.info("changeDisplayName error: "+e.getMessage());
+        }
+        return false;
+    }
+
+    public boolean changeDisplayStatus(String uid, String displayStatus){
+        String sql = "UPDATE users SET display_status = ? WHERE user_id = ?";
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement(sql);
+
+            stmt.setString(1, displayStatus);
+            stmt.setString(2, uid);
+
+            int rs = stmt.executeUpdate();
+            connection.commit();
+            return rs > 0;
+        } catch (SQLException e) {
+            logger.info("changeDisplayStatus error: "+e.getMessage());
+        }
+        return false;
     }
 
     // =========================================================================
@@ -1889,8 +2191,6 @@ public final class DatabaseManager {
      * The server stores CIPHERTEXT only.
      * It never sees the plaintext content.
      *
-     * @param fromJid          Sender's full JID
-     * @param toJid            Recipient's bare JID
      * @param messageId        Client-generated UUID for this message
      * @param messageType      text | image | video | audio | file | location
      * @param encryptedContent Base64 AES-256-GCM ciphertext
@@ -2185,6 +2485,68 @@ public final class DatabaseManager {
         }
     }
 
+    public record OfflineMailEvent(
+            String receiverId,
+            String senderId,
+            String payload
+    ){}
+
+    public boolean storeMailEvent(
+            String senderId,
+            String receiverId,
+            String field,
+            String value
+    ) {
+        String sql = """
+        INSERT INTO offline_mail_box (
+            recipient_id,
+            sender_id,
+            event_type,
+            payload
+        ) VALUES (
+            ?, ?, 'PROFILE_UPDATE', JSON_OBJECT(?, ?)
+        ) ON DUPLICATE KEY UPDATE
+            payload = JSON_SET(payload, CONCAT('$.', ?), ?)
+    """;
+
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, receiverId);
+            stmt.setString(2, senderId);
+            stmt.setString(3, field);
+            stmt.setString(4, value);
+            stmt.setString(5, field);
+            stmt.setString(6, value);
+
+            int result = stmt.executeUpdate();
+            conn.commit();
+            return result > 0;
+        } catch (SQLException e) {
+            logger.severe("storeSystemEvent error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public List<OfflineMailEvent> getOfflineMailEvents(String uid){
+        List<OfflineMailEvent> events = new ArrayList<>();
+
+        logger.info("Fetching mail event for user with id: "+uid);
+        String sql = "SELECT * FROM offline_mail_box WHERE recipient_id = ?";
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setString(1, uid);
+            ResultSet rs = stmt.executeQuery();
+            while(rs.next()){
+                events.add(new OfflineMailEvent(rs.getString("recipient_id"), rs.getString("sender_id"), rs.getString("payload")));
+            }
+            connection.commit();
+        }catch(SQLException exception){
+            logger.info("getOfflineMailEvent error: "+exception.getMessage());
+        }
+        return events;
+    }
+
+
     /**
      * Fetches and deletes all pending offline messages for a user.
      * <p>
@@ -2313,7 +2675,9 @@ public final class DatabaseManager {
     // =========================================================================
 
     public void storeReceipt(String from, String to, String id, String type){
-        logger.info("Persisting the receipt of type :"+type);
+        logger.info("Persisting the receipt of type :"+type+" :to use: "+to);
+        String finalTo = to;
+        if(to.contains("@")) finalTo = to.split("@")[0];
         String sql = """
                 INSERT INTO pending_receipts (from_uid, to_uid, message_id, receipt_type) VALUES(
                     ?, ?, ?, ?
@@ -2323,7 +2687,7 @@ public final class DatabaseManager {
         try(Connection conn = pool.getConnection()){
             PreparedStatement stmt = conn.prepareStatement(sql);
             stmt.setString(1, from);
-            stmt.setString(2, to);
+            stmt.setString(2, finalTo);
             stmt.setString(3, id);
             stmt.setString(4, type);
 

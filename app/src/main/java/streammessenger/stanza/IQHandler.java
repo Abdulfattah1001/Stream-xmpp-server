@@ -17,6 +17,7 @@ import java.util.logging.Logger;
 import streammessenger.api.CloudinarySlotManager;
 import streammessenger.call.CallSignalingHandler;
 import streammessenger.db.DatabaseManager;
+import streammessenger.features.CollaborativeNoteHandler;
 import streammessenger.roster.RosterItem;
 import streammessenger.roster.RosterManager;
 import streammessenger.session.Session;
@@ -42,7 +43,12 @@ public final class IQHandler implements StanzaHandler {
 
     private static final String NS_BIND      = "urn:ietf:params:xml:ns:xmpp-bind";
     private static final String NS_ROSTER    = "jabber:iq:roster";
+    private static final String PUB_SUB_ROSTER = "http://jabber.org/protocol/pubsub";
+
     private static final String CALL_NS = "urn:xmpp:call:0";
+    private static final String NOTE_NS = "urn:xmpp:note:0";
+    private static final String CRDT_NS = "urn:xmpp:crdt-note:0";
+
     private static final String UPLOAD_SLOT = "urn:xmpp:http:upload:0";
     private static final String PRIVACY_NS = "urn:xmpp:custom:privacy:0";
     private static final String NS_PING      = "urn:ietf:params:xml:ns:xmpp-ping";
@@ -54,18 +60,25 @@ public final class IQHandler implements StanzaHandler {
     private final RosterManager rosterManager;
     private final PrivacyHandler privacyHandler;
     private final CloudinarySlotManager cloudinarySlotManager;
+    private final CollaborativeNoteHandler collaborativeNoteHandler;
+    private final CRDTNoteHandler crdtNoteHandler;
+    private final PubSubHandler pubSubHandler;
 
     public IQHandler(DatabaseManager db, SessionRegistry registry,
-                     RosterManager rosterManager, CallSignalingHandler callSignalingHandler) {
+                     RosterManager rosterManager, CallSignalingHandler callSignalingHandler, CollaborativeNoteHandler handler, CRDTNoteHandler crdtHandler) {
         this.bindHandler = new ResourceBindHandler(db);
         this.rosterManager = rosterManager;
         this.callSignalingHandler = callSignalingHandler;
         this.cloudinarySlotManager = new CloudinarySlotManager();
         this.privacyHandler = new PrivacyHandler(db, registry);
+        this.collaborativeNoteHandler = handler;
+        this.crdtNoteHandler = crdtHandler;
+        this.pubSubHandler = new PubSubHandler(db, registry);
     }
 
     @Override
     public void handle(StartElement element, XMLEventReader reader, Session session) {
+
         String id   = getAttr(element, "id");
         String type = getAttr(element, "type");
         String from = getAttr(element, "from");
@@ -84,7 +97,6 @@ public final class IQHandler implements StanzaHandler {
             sendError(session, id, "feature-not-implemented", "cancel");
             return;
         }
-
         switch (child.namespace()) {
             case NS_BIND -> {
                 // Resource bind - pass the whole IQ to bind handler
@@ -92,7 +104,17 @@ public final class IQHandler implements StanzaHandler {
                 bindHandler.handle(element, child.replayReader(reader), session);
             }
 
+            case PUB_SUB_ROSTER ->  {
+                pubSubHandler.handle(element, reader, session);
+            }
+
             case NS_ROSTER -> handleRosterIQ(type, id, child, reader, session);
+
+            /*case NOTE_NS -> collaborativeNoteHandler.handle(element, reader, session);
+
+            case CRDT_NS -> {
+                crdtNoteHandler.handle(element, reader, session);
+            }*/
 
             case NS_PING -> {
                 handlePing(id, from, session);

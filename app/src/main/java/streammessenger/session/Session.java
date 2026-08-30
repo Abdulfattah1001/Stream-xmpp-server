@@ -86,6 +86,8 @@ public class Session {
     // Written once during TLS upgrade, read many times after
     private volatile SSLSocket sslSocket;
 
+    private boolean isProxyTls = false;
+
     // Written once during authentication, read many times after
     private volatile String contactId; // user@domain
     private volatile String resource;
@@ -355,6 +357,17 @@ public class Session {
     public Socket getSocket() { return socket; }
 
     public SSLSocket getSSLSocket() { return sslSocket; }
+
+    public void setProxyTls(boolean proxyTls) {
+        this.isProxyTls = proxyTls;
+    }
+
+    /**
+     * Returns true if TLS is active either via local SSLSocket or upstream Nginx Proxy.
+     */
+    public boolean isSecure() {
+        return isProxyTls || (sslSocket != null && !sslSocket.isClosed());
+    }
 
     public void setSSlSocket(SSLSocket sslSocket) {
         this.sslSocket = sslSocket;

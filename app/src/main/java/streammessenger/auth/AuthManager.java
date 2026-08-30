@@ -83,7 +83,7 @@ public final class AuthManager {
         }
 
         // 2. Require TLS - PLAIN over plain text is a security violation [Armed robber case to be precise]
-        if (session.getSSLSocket() == null) {
+        if (session.isSecure()/*getSSLSocket()== null*/) {
             metrics.authFailure();
             throw new AuthenticationException(
                     "SASL PLAIN requires TLS negotiation first",
@@ -177,7 +177,7 @@ public final class AuthManager {
         }
 
         // 2. Require TLS - PLAIN over plain text is a security violation [Armed robber case to be precise]
-        if (session.getSSLSocket() == null) {
+        if (!session.isSecure()/*getSSLSocket()== null*/) {
             metrics.authFailure();
             throw new AuthenticationException(
                     "SASL PLAIN requires TLS negotiation first",

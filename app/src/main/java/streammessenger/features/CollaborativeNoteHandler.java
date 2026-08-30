@@ -543,13 +543,17 @@ public final class CollaborativeNoteHandler implements StanzaHandler {
                                String title,
                                String conversationJid) {
         String sql = """
-            INSERT INTO collaborative_notes (
-                note_id, creator_user_id,
-                conversation_jid, title,
-                content, revision,
-                created_at, updated_at
-            ) VALUES (?::uuid, ?, ?, ?, '', 0, NOW(), NOW())
-            """;
+                INSERT INTO collaborative_notes (
+                    note_id,
+                    creator_user_id,
+                    conversation_jid,
+                    title,
+                    content,
+                    revision,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, '', 0, NOW(), NOW());
+                """;
 
         try (Connection conn = pool.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
@@ -983,7 +987,6 @@ public final class CollaborativeNoteHandler implements StanzaHandler {
                     StartElement se = event.asStartElement();
                     String name = se.getName().getLocalPart();
                     String ns   = se.getName().getNamespaceURI();
-
                     if ("note".equals(name) && NOTE_NS.equals(ns)) {
                         action       = getAttr(se, "action");
                         lockPosition = parseInt(getAttr(se, "position"), -1);
@@ -1007,6 +1010,7 @@ public final class CollaborativeNoteHandler implements StanzaHandler {
                 }
 
                 if (event.isEndElement()) depth--;
+                if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("note")) break;
             }
         } catch (XMLStreamException e) {
             logger.warning("parseRequest error: " + e.getMessage());

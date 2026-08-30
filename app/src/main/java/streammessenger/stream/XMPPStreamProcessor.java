@@ -36,10 +36,12 @@ import streammessenger.session.SessionRegistry;
 import streammessenger.session.SessionState;
 import streammessenger.stanza.AuthHandler;
 import streammessenger.stanza.BlogHandler;
+import streammessenger.stanza.CRDTNoteHandler;
 import streammessenger.stanza.CarbonHandler;
 import streammessenger.stanza.EncryptedMessageHandler;
 import streammessenger.stanza.IQHandler;
 import streammessenger.stanza.PresenceHandler;
+import streammessenger.stanza.ReactionHandler;
 import streammessenger.stanza.StanzaHandler;
 import streammessenger.stanza.StatusHandler;
 import streammessenger.stanza.VerifiedAccountHandler;
@@ -89,6 +91,9 @@ public final class XMPPStreamProcessor {
                                CarbonHandler carbonHandler,
                                MultiDeviceMessageHandler multiDeviceMessageHandler,
                                CallSignalingHandler callHandler) {
+        CollaborativeNoteHandler collaborativeNoteHandler = new CollaborativeNoteHandler(pool, registry);
+        ReactionHandler reactionHandler = new ReactionHandler(pool, registry);
+        CRDTNoteHandler crdtNoteHandler =  new CRDTNoteHandler(pool, registry);
         this.db     = db;
         this.metrics = metrics;
         this.smHandler = new StreamManagementHandler(registry);
@@ -102,12 +107,12 @@ public final class XMPPStreamProcessor {
         this.handlers = new HashMap<>();
         this.handlers.put("auth",     new AuthHandler(authManager));
         //TODO: Not encrypted message:this.handlers.put("message",  new MessageHandler(registry, db, metrics));
-        this.handlers.put("message", new EncryptedMessageHandler(registry, db, metrics));
+        this.handlers.put("message", new EncryptedMessageHandler(registry, db, metrics, reactionHandler, crdtNoteHandler));
         this.handlers.put("presence", new PresenceHandler(registry, db));
-        this.handlers.put("iq",       new IQHandler(db, registry, rosterManager, callHandler));
+        this.handlers.put("iq",       new IQHandler(db, registry, rosterManager, callHandler, collaborativeNoteHandler, crdtNoteHandler));
         this.handlers.put("status-iq",new StatusHandler(db, registry));
         this.handlers.put("call",     callHandler);
-        this.handlers.put("note",     new CollaborativeNoteHandler(pool, registry));
+        this.handlers.put("note",     collaborativeNoteHandler);
         //this.handlers.put("schedule", new ScheduledMessageHandler(pool, db, registry, (MessageHandler) this.handlers.get("message")));
         this.handlers.put("verified", new VerifiedAccountHandler(pool, registry));
         this.handlers.put("blog", new BlogHandler(db, registry, new BlogDatabaseManager(pool)));
@@ -320,7 +325,7 @@ public final class XMPPStreamProcessor {
 
                 // Peek at the child to route to specific handlers
                 String iqNs = peekChildNamespace(reader, element);
-                if (iqNs.equals(GROUP_NS)) {
+                if (iqNs != null && iqNs.equals(GROUP_NS)) {
                     if (groupHandler != null) {
                         groupHandler.handle(element, reader, session);
                         metrics.stanzaProcessed();
@@ -568,7 +573,6 @@ public final class XMPPStreamProcessor {
     private void handleStreamOpen(StartElement element, Session session)
             throws IOException {
 
-        //session.setSessionState(SessionState.STREAM_OPENED);
         session.touchActivity();
 
         Attribute toAttr =
@@ -602,6 +606,7 @@ public final class XMPPStreamProcessor {
      *   AUTHENTICATED       → Resource bind (required) + optional features
      */
     private String buildStreamFeatures(Session session) {
+        logger.info("Stream state is: "+session.getSessionState().name());
         return switch (session.getSessionState()) {
             case STREAM_OPENED ->
                     "<stream:features>" +
@@ -635,8 +640,29 @@ public final class XMPPStreamProcessor {
         };
     }
 
-    private void handleStartTLS(Session session)
-            throws StartTLSException, IOException {
+    private void handleStartTLS(Session session) throws StartTLSException, IOException {
+
+        // Reject if TLS was already negotiated locally OR terminated by Nginx Proxy
+        if (session.getSessionState() == SessionState.STARTTLS_NEGOTIATED
+                || session.getSessionState() == SessionState.AUTHENTICATED) {
+            session.writeStreamError(
+                    StreamException.Condition.POLICY_VIOLATION,
+                    "STARTTLS already negotiated"
+            );
+            throw new StartTLSException("Duplicate STARTTLS");
+        }
+
+        // Must write to the PLAIN socket (before upgrade)
+        OutputStreamWriter writer = new OutputStreamWriter(
+                session.getSocket().getOutputStream(), StandardCharsets.UTF_8);
+        writer.write("<proceed xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>");
+        writer.flush();
+
+        // Break out of event loop for local TLSUpgrader
+        throw new StartTLSException("Client requested STARTTLS upgrade");
+    }
+
+    private void handleStartTLSLegacy(Session session) throws StartTLSException, IOException {
 
         if (session.getSessionState() == SessionState.STARTTLS_NEGOTIATED) {
             session.writeStreamError(

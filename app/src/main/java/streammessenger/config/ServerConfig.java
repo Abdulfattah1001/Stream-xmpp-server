@@ -91,7 +91,12 @@ public final class ServerConfig {
 
         SSLContext sslContext;
         try {
-            sslContext = buildSSLContext(certPath, ksPassword, keyPassword);
+            if(isDev){
+                sslContext = buildSSLContext(certPath, ksPassword, keyPassword);
+            }else {
+                sslContext = SSLContext.getDefault();
+                logger.info("Loaded the default ssl context, and lets Nginx manages the TLS");
+            }
         } finally {
             // Zero out secrets immediately after use for security purposes WARNING
             Arrays.fill(ksPassword, '\0');
@@ -102,12 +107,12 @@ public final class ServerConfig {
 
         return new Builder()
                 .port(intProp(props, "port", 5222))
-                .botApiPort(intProp(props, "botApiPort", 5223))
+                .botApiPort(intProp(props, "botApiPort", 5224))
                 .fcmProjectId(props.getProperty("fcmProjectId", "stream-6fa32"))
                 .fcmServiceAccountJson(props.getProperty("fcmServiceAccountJson", ""))
                 .apnsBundleId(props.getProperty("apnsBundleId", ""))
                 .address(props.getProperty("address", "0.0.0.0"))
-                .domainName("omnyrex.com")
+                .domainName(props.getProperty("domainName", "chat.omnyrex.com"))
                 .environment(env)
                 .sslContext(sslContext)
                 .corePoolSize(intProp(props, "corePoolSize", 10))

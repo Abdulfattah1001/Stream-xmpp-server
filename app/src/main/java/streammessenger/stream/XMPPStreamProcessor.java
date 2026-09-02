@@ -12,14 +12,13 @@ import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 
 import streammessenger.auth.AuthManager;
 import streammessenger.call.CallSignalingHandler;
+import streammessenger.config.ServerConfig;
 import streammessenger.db.BlogDatabaseManager;
 import streammessenger.db.ConnectionPool;
 import streammessenger.db.DatabaseManager;
@@ -29,7 +28,6 @@ import streammessenger.features.CollaborativeNoteHandler;
 import streammessenger.group.handler.GroupStanzaHandler;
 import streammessenger.metrics.ServerMetrics;
 import streammessenger.mutlidevice.MultiDeviceMessageHandler;
-import streammessenger.push.PushNotificationService;
 import streammessenger.roster.RosterManager;
 import streammessenger.session.Session;
 import streammessenger.session.SessionRegistry;
@@ -69,7 +67,7 @@ public final class XMPPStreamProcessor {
     private static final String GROUP_NS = "urn:xmpp:group:0";
 
     // MUC routing
-    private final String mucDomain;          // "conference.yourdomain.com"
+    private final String mucDomain;          // "conference.omnyrex.com"
     private volatile GroupStanzaHandler groupHandler;
     // Stanza handlers - stateless singletons, keyed by element local name
     private final Map<String, StanzaHandler> handlers;
@@ -90,7 +88,7 @@ public final class XMPPStreamProcessor {
                                ServerMetrics metrics, ConnectionPool pool,
                                CarbonHandler carbonHandler,
                                MultiDeviceMessageHandler multiDeviceMessageHandler,
-                               CallSignalingHandler callHandler) {
+                               CallSignalingHandler callHandler, ServerConfig config) {
         CollaborativeNoteHandler collaborativeNoteHandler = new CollaborativeNoteHandler(pool, registry);
         ReactionHandler reactionHandler = new ReactionHandler(pool, registry);
         CRDTNoteHandler crdtNoteHandler =  new CRDTNoteHandler(pool, registry);
@@ -109,7 +107,7 @@ public final class XMPPStreamProcessor {
         //TODO: Not encrypted message:this.handlers.put("message",  new MessageHandler(registry, db, metrics));
         this.handlers.put("message", new EncryptedMessageHandler(registry, db, metrics, reactionHandler, crdtNoteHandler));
         this.handlers.put("presence", new PresenceHandler(registry, db));
-        this.handlers.put("iq",       new IQHandler(db, registry, rosterManager, callHandler, collaborativeNoteHandler, crdtNoteHandler));
+        this.handlers.put("iq",       new IQHandler(db, registry, rosterManager, callHandler, collaborativeNoteHandler, crdtNoteHandler, config));
         this.handlers.put("status-iq",new StatusHandler(db, registry));
         this.handlers.put("call",     callHandler);
         this.handlers.put("note",     collaborativeNoteHandler);
@@ -156,7 +154,7 @@ public final class XMPPStreamProcessor {
      * Saves SM state if the session had SM enabled.
      */
     public void onSessionDisconnect(Session session) {
-        db.updateUserLastSeen(session.getJid());
+        db.updateLastSeen(session.getJid());
         smHandler.onSessionDisconnect(session);
     }
 
@@ -274,7 +272,10 @@ public final class XMPPStreamProcessor {
             // ─────────────────────────────────────────────────────────────
             // Stanzas - require authentication
             // ─────────────────────────────────────────────────────────────
-            case "messageold", "presence", "iqold" -> {
+            case "presence"-> {
+
+                logger.info("Handling a presence request from the client");
+
                 if (!session.isAuthenticated()) {
                     logger.warning("Unauthenticated stanza <"
                             + localName + "> uid=" + session.getSessionId());
@@ -330,7 +331,6 @@ public final class XMPPStreamProcessor {
                         groupHandler.handle(element, reader, session);
                         metrics.stanzaProcessed();
                     } else {
-                        logger.warning("Group handler not registered");
                         consumeElement(reader);
                     }
                 }
@@ -482,7 +482,9 @@ public final class XMPPStreamProcessor {
      *   2. Then offline stored messages are delivered
      */
     private void deliverOfflineMessagesAfterResume(Session session) {
+        logger.info("Message Delivery after resumption");
         if (session.getContactId() == null) return;
+        logger.info("Tested for nullability");
 
         Thread.ofVirtual()
                 .name("offline-delivery-" + session.getSessionId())
@@ -606,7 +608,6 @@ public final class XMPPStreamProcessor {
      *   AUTHENTICATED       → Resource bind (required) + optional features
      */
     private String buildStreamFeatures(Session session) {
-        logger.info("Stream state is: "+session.getSessionState().name());
         return switch (session.getSessionState()) {
             case STREAM_OPENED ->
                     "<stream:features>" +

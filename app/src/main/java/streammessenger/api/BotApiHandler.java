@@ -17,7 +17,7 @@ import streammessenger.session.SessionRegistry;
 
 /**
  * Open API for bots and third-party integrations.
- *
+ * <p>
  * WHAT THIS IS:
  * ─────────────
  * A webhook-based API that allows external services to:
@@ -25,9 +25,9 @@ import streammessenger.session.SessionRegistry;
  *   - Receive messages sent to the bot
  *   - Post blog articles automatically
  *   - Broadcast announcements to groups
- *
+ * <p>
  * Think: Telegram Bot API, Slack App API, but for your server.
- *
+ * <p>
  * BOT CREATION FLOW:
  * ──────────────────
  * 1. Developer registers a bot via the API
@@ -36,7 +36,7 @@ import streammessenger.session.SessionRegistry;
  * 4. Developer registers a webhook URL
  * 5. When a user messages the bot, server POSTs to webhook
  * 6. Bot handler POSTs a reply to /api/bot/send
- *
+ * <p>
  * SECURITY:
  * ─────────
  * - API key authentication for all bot endpoints
@@ -44,7 +44,7 @@ import streammessenger.session.SessionRegistry;
  * - Webhook signature verification (HMAC-SHA256)
  * - Bots cannot impersonate regular users
  * - Bots cannot read messages not addressed to them
- *
+ * <p>
  * ENDPOINTS:
  * ──────────
  *   POST /api/bot/register     → Register a new bot
@@ -98,24 +98,24 @@ public final class BotApiHandler {
 
     /**
      * POST /api/bot/register
-     *
+     * <p>
      * Creates a new bot account.
      * Only admin users can create bots (checked via admin API key).
-     *
+     * <p>
      * Request:
      * {
      *   "admin_key": "admin_api_key",
      *   "bot_name": "my_news_bot",
      *   "display_name": "My News Bot",
      *   "description": "Posts daily news summaries",
-     *   "webhook_url": "https://mybotserver.com/webhook",
+     *   "webhook_url": "<a href="https://bot.omnyrex.com/webhook">...</a>",
      *   "webhook_secret": "my_secret_for_hmac"
      * }
-     *
+     * <p>
      * Response:
      * {
      *   "bot_id": "bot_7f3a9b2c",
-     *   "jid": "my_news_bot@yourdomain.com",
+     *   "jid": "my_news_bot@omnyrex.com",
      *   "api_key": "bk_7f3a9b2c...",
      *   "api_secret": "bs_abc123..."
      * }
@@ -127,12 +127,12 @@ public final class BotApiHandler {
             String body = readBody(exchange);
             SimpleJson req = SimpleJson.parse(body);
 
-            String adminKey    = req.getString("admin_key");
-            String botName     = req.getString("bot_name");
-            String displayName = req.getString("display_name");
-            String description = req.getString("description");
-            String webhookUrl  = req.getString("webhook_url");
-            String webhookSecret = req.getString("webhook_secret");
+            String adminKey    = req.getString("admin_key"); // Admin Key
+            String botName     = req.getString("bot_name");  // Bot name
+            String displayName = req.getString("display_name"); // Display name
+            String description = req.getString("description"); // Username
+            String webhookUrl  = req.getString("webhook_url"); // Webhook Url
+            String webhookSecret = req.getString("webhook_secret"); // Webhook Secret
 
             if (!validateAdminKey(adminKey)) {
                 sendError(exchange, 401, "Invalid admin key");
@@ -185,10 +185,10 @@ public final class BotApiHandler {
 
     /**
      * POST /api/bot/send
-     *
+     * <p>
      * Sends a message to a user or group as the bot.
      * The message is delivered via XMPP to the recipient.
-     *
+     * <p>
      * Request:
      * {
      *   "api_key": "bk_7f3a9b2c...",
@@ -200,13 +200,13 @@ public final class BotApiHandler {
      *      "value": "https://news.com/article"}
      *   ]
      * }
-     *
+     * <p>
      * Response:
      * {
      *   "message_id": "uuid",
      *   "delivered": true
      * }
-     *
+     * <p>
      * NOTE: Bot messages are NOT end-to-end encrypted.
      * They are plaintext from the server to the client.
      * The client knows it's a bot message (different rendering).
@@ -292,10 +292,10 @@ public final class BotApiHandler {
 
     /**
      * POST /api/bot/webhook
-     *
+     * <p>
      * Registers or updates the webhook URL for this bot.
      * When a user sends a message to the bot, we POST to this URL.
-     *
+     * <p>
      * Webhook payload (what we POST to your URL):
      * {
      *   "event": "message",
@@ -307,7 +307,7 @@ public final class BotApiHandler {
      *   "timestamp": 1703001234567,
      *   "signature": "HMAC-SHA256 of payload with webhook_secret"
      * }
-     *
+     * <p>
      * Verify signature:
      *   expected = HMAC-SHA256(webhook_secret, raw_payload_bytes)
      *   if (signature != expected) { reject the webhook }
@@ -385,11 +385,11 @@ public final class BotApiHandler {
 
     /**
      * POST /api/bot/broadcast
-     *
+     * <p>
      * Sends a message to ALL users (or a filtered subset).
      * Only bots with admin=true can use this endpoint.
      * Rate limited: max 1 broadcast per hour.
-     *
+     * <p>
      * Request:
      * {
      *   "api_key": "bk_...",
@@ -766,8 +766,10 @@ public final class BotApiHandler {
 
     private String escapeXml(String s) {
         if (s == null) return "";
-        return s.replace("&", "&amp;").replace("<", "&lt;")
-                .replace(">", "&gt;").replace("'", "&apos;");
+        return s.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("'", "&apos;");
     }
 
     // =========================================================================

@@ -45,10 +45,7 @@ public final class AuthHandler implements StanzaHandler {
         String payload = extractPayload(reader);
 
         try {
-            //TODO: authManager.authenticate(mechanism, payload, session);
-            //
             authManager.authenticateUserToken(mechanism, payload, session);
-
             // RFC 6120: On success, send <success> and the client must
             // open a new stream
             session.writeXML("<success xmlns='" + SASL_NS + "'/>");

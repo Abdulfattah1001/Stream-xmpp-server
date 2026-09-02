@@ -102,7 +102,7 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         }
 
         String id   = getAttr(element, "id");
-        String to   = getAttr(element, "to") + "@localhost";  // u_qwicvu
+        String to   = getAttr(element, "to");
         String type = getAttr(element, "type");
 
         if (id == null) id = UUID.randomUUID().toString();
@@ -177,7 +177,6 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                                      String messageId) {
         // Check the message keys
         String identityKey = parsed.identityKey();
-        logger.info("The keys are: "+identityKey);
         Optional<String> key = db.getIdentityKey(toContactId);
         if(key.isPresent() &&!key.get().equals(identityKey)) {
             sender.writeXML(String.format("<message type='INVALID_KEY' id='%s' from='%s'> </message>", messageId, toContactId));
@@ -192,17 +191,12 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         boolean delivered = false;
 
         // Try online delivery first
-        String id = toContactId;
-        if(!toContactId.contains("@")) id = toContactId+"@localhost";
-        java.util.Optional<Session> recipientSession = registry.getByContactId(id);
+        java.util.Optional<Session> recipientSession = registry.getByContactId(toContactId);
 
         if (recipientSession.isPresent() && recipientSession.get().isAuthenticated()) {
             delivered = recipientSession.get().writeXML(stanzaXml);
-            logger.info("Session exist for id: "+id);
             if(delivered) logger.info("Message sent"); else logger.info("Message not sent");
-        } else {
-            logger.info("Session does not exist: "+id);
-        }
+        } else {}
 
         if (delivered) {
             metrics.messageSent();

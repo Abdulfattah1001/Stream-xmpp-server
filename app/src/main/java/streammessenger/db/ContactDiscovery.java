@@ -5,6 +5,8 @@ import java.util.*;
 import java.util.logging.Logger;
 
 /**
+ * Though this is handle on the REST-API Nodejs server
+ * but still worth mentioning it here.
  * Handles phonebook upload and contact discovery.
  * <p>
  * THE FLOW:
@@ -32,6 +34,8 @@ import java.util.logging.Logger;
  *   - We detect the mutual connection
  *   - Upgrade BOTH sides to 'both'
  *   - Send roster push to both
+ * <p>
+ * But there's a catch
  */
 public final class ContactDiscovery {
 

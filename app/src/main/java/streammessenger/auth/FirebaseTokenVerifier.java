@@ -103,7 +103,7 @@ public final class FirebaseTokenVerifier {
         long expiry      = extractJsonLong(payloadJson, "exp");
         long issuedAt    = extractJsonLong(payloadJson, "iat");
 
-        // 3. Validate claims
+        // 3. Validate claims, Since Google uses RS256 Algorithm
         if (!"RS256".equals(algorithm)) {
             throw new InvalidTokenException(
                 "Unsupported algorithm: " + algorithm);

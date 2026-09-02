@@ -197,13 +197,14 @@ public final class CallSignalingHandler implements StanzaHandler {
             return;
         }
 
-        // Store call state
+        // Store call state, if the caller is not already in a call
         CallState state = new CallState(
                 req.callId(), callerId,
                 callerSession.getContactId(),
                 calleeId, calleeJid,
                 callType, System.currentTimeMillis());
 
+        // Put it in a memory for fast look-up
         activeCalls.put(req.callId(), state);
 
         // Create DB record
@@ -592,11 +593,16 @@ public final class CallSignalingHandler implements StanzaHandler {
     // Database
     // =========================================================================
 
-    //TODO: Updates
+    /** TODO: Since the server only serves to route messages
+     *  the call records should not persevere on the server,
+     *  they should be routed to the recipient of the action,
+     *  as long as they are online or cache if they are offline
+     */
     private void createCallRecord(String callId,
                                    String callerUserId,
                                    String calleeUserId,
                                    String callType) {
+        logger.info("Creating an entry for a call");
         String sql = """
     INSERT INTO call_records (
         call_id, caller_user_id, callee_user_id,

@@ -12,9 +12,9 @@ import java.util.Base64;
 
 /**
  * End-to-end message encryption using AES-256-GCM.
- *
+ * <p>
  * The server NEVER sees plaintext. Only ciphertext is stored/routed.
- *
+ * <p>
  * Key Exchange (done on client, not server):
  *   1. Alice and Bob each have an ECDH key pair (Curve25519 / EC)
  *   2. They exchange public keys via the server's key store
@@ -91,7 +91,7 @@ public final class MessageEncryption {
 
     /**
      * Derives the shared secret between two parties.
-     *
+     * <p>
      * Alice calls:  deriveSharedSecret(alice_private, bob_public)
      * Bob calls:    deriveSharedSecret(bob_private, alice_public)
      * Both get the SAME 32-byte secret.
@@ -112,7 +112,7 @@ public final class MessageEncryption {
     /**
      * Derives a 32-byte AES key from the ECDH shared secret
      * using HKDF (HMAC-based Key Derivation Function).
-     *
+     * <p>
      * The context string differentiates keys for different purposes
      * (message encryption vs metadata encryption vs etc.)
      */
@@ -193,7 +193,7 @@ public final class MessageEncryption {
      * Generates a random AES-256 key for encrypting a media file.
      * This key is then encrypted with the shared ECDH key and
      * sent to the recipient alongside the media reference.
-     *
+     * <p>
      * Each media file gets its OWN random key.
      * Even if one media key is compromised, others are safe.
      */
@@ -231,7 +231,7 @@ public final class MessageEncryption {
     /**
      * Encrypts the media key itself using the conversation shared key.
      * The encrypted media key is what gets stored in messages.encrypted_content.
-     *
+     * <p>
      * This way:
      *   - Media file is encrypted with random mediaKey
      *   - mediaKey is encrypted with sharedKey

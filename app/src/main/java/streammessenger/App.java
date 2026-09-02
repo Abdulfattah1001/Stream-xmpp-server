@@ -25,10 +25,7 @@ public final class App {
 
     public static void main(String[] args) {
         Logger logger = Logger.getLogger(App.class.getName());
-        try{
-            logger  .info("Setting up Firebase Authentication");
-            FirebaseSetup.setup();
-        } catch (IOException e) {
+        try{ FirebaseSetup.setup(); } catch (IOException e) {
             System.err.println("[FATAL] Firebase Setup error: "+e.getMessage());
             System.exit(1);
         }
@@ -56,7 +53,6 @@ public final class App {
             System.exit(1);
         } catch (Exception e) {
             System.err.println("[FATAL] Failed to start server: " + e.getMessage());
-            e.printStackTrace();
             System.exit(1);
         }
     }

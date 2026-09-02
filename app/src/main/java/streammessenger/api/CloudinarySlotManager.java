@@ -5,38 +5,22 @@ import com.cloudinary.utils.ObjectUtils;
 import java.util.HashMap;
 import java.util.Map;
 
+import streammessenger.config.ServerConfig;
+
+
+/**
+ * Lightweight Cloudinary API for requesting for media upload
+ * url bucked.
+ */
 public class CloudinarySlotManager {
     private final Cloudinary cloudinary;
 
-    public CloudinarySlotManager() {
-        Map<String, String> config = new HashMap<>();
-        config.put("cloud_name", "dhsnoieuh");
-        config.put("api_key", "729978899198535");
-        config.put("api_secret", "bs980RaKmZ66ff_NjXKvjPbn20M");
-        this.cloudinary = new Cloudinary(config);
-    }
-
-    public Map<String, Object> generateUploadSlot(String userJid) {
-        // Cloudinary requires the timestamp in SECONDS as a String
-        String timestamp = String.valueOf(System.currentTimeMillis() / 1000L);
-        String folderPath = "chat_media/" + userJid.replace("@", "_"); // Clean up JID special chars
-
-        Map<String, Object> paramsToSign = new HashMap<>();
-        paramsToSign.put("timestamp", timestamp);
-        paramsToSign.put("folder", folderPath);
-
-        // This method automatically sorts them alphabetically and signs them with the secret key
-        String signature = cloudinary.apiSignRequest(paramsToSign, cloudinary.config.apiSecret, 1);
-
-        // Package up the exact payload components for the Android client
-        Map<String, Object> responseSlot = new HashMap<>();
-        responseSlot.put("upload_url", "https://api.cloudinary.com/v1_1/" + cloudinary.config.cloudName + "/image/upload");
-        responseSlot.put("signature", signature);
-        responseSlot.put("timestamp", timestamp);
-        responseSlot.put("api_key", cloudinary.config.apiKey);
-        responseSlot.put("folder", folderPath);
-
-        return responseSlot;
+    public CloudinarySlotManager(ServerConfig config) {
+        Map<String, String> configMap = new HashMap<>();
+        configMap.put("cloud_name", config.getCloudinaryCloudName());
+        configMap.put("api_key", config.getCloudinaryApiKey());
+        configMap.put("api_secret", config.getCloudinaryApiSecret());
+        this.cloudinary = new Cloudinary(configMap);
     }
 
     public Map<String, Object> generateUploadSlot(String userJid, String mimeType) {

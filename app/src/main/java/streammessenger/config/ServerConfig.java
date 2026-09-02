@@ -4,7 +4,6 @@ import javax.net.ssl.*;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.security.*;
-import java.security.cert.CertificateException;
 import java.util.Arrays;
 import java.util.Properties;
 import java.util.logging.Logger;
@@ -42,6 +41,9 @@ public final class ServerConfig {
     private final int dbPoolMin;
     private final int dbPoolMax;
     private final long dbPoolTimeout;
+    private final String cloudinaryCloudname;
+    private final String cloudinaryApiKey;
+    private final String cloudinaryApiSecret;
 
     private ServerConfig(Builder b) {
         this.port = b.port;
@@ -64,6 +66,9 @@ public final class ServerConfig {
         this.fcmServiceAccountJson = b.fcmServiceAccountJson;
         this.apnsBundleId = b.apnsBundleId;
         this.botApiPort = b.botApiPort;
+        this.cloudinaryCloudname = b.cloudinaryCloudName;
+        this.cloudinaryApiKey = b.cloudinaryApiKey;
+        this.cloudinaryApiSecret = b.cloudinaryApiSecret;
     }
 
     /**
@@ -86,11 +91,28 @@ public final class ServerConfig {
                 : requireProperty(props, "prodTlsCertPath");
 
         // Passwords MUST come from env variables - never properties files
-        char[] ksPassword = requireSecret("KEYSTORE_PASSWORD");
-        char[] keyPassword = requireSecret("KEY_PASSWORD");
+        //char[] ksPassword = requireSecret("KEYSTORE_PASSWORD");
+        //char[] keyPassword = requireSecret("KEY_PASSWORD");
 
         SSLContext sslContext;
-        try {
+
+        if(isDev){
+            // Passwords MUST come from env variables - never properties files
+            char[] ksPassword = requireSecret("KEYSTORE_PASSWORD");
+            char[] keyPassword = requireSecret("KEY_PASSWORD");
+
+            try{
+                sslContext = buildSSLContext(certPath, ksPassword, keyPassword);
+            }finally {
+                // Zero out secrets immediately after use for security purposes WARNING
+                Arrays.fill(ksPassword, '\0');
+                Arrays.fill(keyPassword, '\0');
+            }
+        }else {
+            logger.info("Loading the default ssl context, and lets Nginx manages the TLS");
+            sslContext = SSLContext.getDefault();
+        }
+        /*try {
             if(isDev){
                 sslContext = buildSSLContext(certPath, ksPassword, keyPassword);
             }else {
@@ -101,7 +123,7 @@ public final class ServerConfig {
             // Zero out secrets immediately after use for security purposes WARNING
             Arrays.fill(ksPassword, '\0');
             Arrays.fill(keyPassword, '\0');
-        }
+        }*/
 
         logger.info("SSLContext initialized [env=" + env + ", cert=" + certPath + "]");
 
@@ -126,6 +148,9 @@ public final class ServerConfig {
                 .dbPoolMin(intProp(props, "db.pool.min", 5))
                 .dbPoolMax(intProp(props, "db.pool.max", 20))
                 .dbPoolTimeout(longProp(props, "db.pool.timeout", 30_000L))
+                .cloudinaryCloudName(props.getProperty("cloudinary_cloudname"))
+                .cloudinaryApiKey(props.getProperty("cloudinary_api_key"))
+                .cloudinaryApiSecret(props.getProperty("cloudinary_api_secret"))
                 .build();
     }
 
@@ -216,6 +241,9 @@ public final class ServerConfig {
     public int getDbPoolMin() { return dbPoolMin; }
     public int getDbPoolMax() { return dbPoolMax; }
     public long getDbPoolTimeout() { return dbPoolTimeout; }
+    public String getCloudinaryCloudName() { return cloudinaryCloudname; }
+    public String getCloudinaryApiKey()     { return cloudinaryApiKey; }
+    public String getCloudinaryApiSecret()  { return cloudinaryApiSecret; }
 
     // -------------------------------------------------------------------------
     // Builder
@@ -242,6 +270,9 @@ public final class ServerConfig {
         private int dbPoolMin = 5;
         private int dbPoolMax = 20;
         private long dbPoolTimeout = 30_000L;
+        private String cloudinaryCloudName;
+        private String cloudinaryApiKey;
+        private String cloudinaryApiSecret;
 
         public Builder port(int v) { this.port = v; return this; }
         public Builder botApiPort(int v) { this.botApiPort = v; return this; }
@@ -265,6 +296,10 @@ public final class ServerConfig {
         public Builder dbPoolMin(int v) { this.dbPoolMin = v; return this; }
         public Builder dbPoolMax(int v) { this.dbPoolMax = v; return this; }
         public Builder dbPoolTimeout(long v) { this.dbPoolTimeout = v; return this; }
+        public Builder cloudinaryCloudName(String v) { this.cloudinaryCloudName = v; return this; }
+        public Builder cloudinaryApiKey(String v)   {  this.cloudinaryApiKey = v; return  this; }
+
+        public Builder cloudinaryApiSecret(String v) { this.cloudinaryApiSecret = v; return this; }
 
         public ServerConfig build() {
             if (sslContext == null) throw new IllegalStateException("SSLContext is required");

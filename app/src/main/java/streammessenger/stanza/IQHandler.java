@@ -16,6 +16,7 @@ import java.util.logging.Logger;
 
 import streammessenger.api.CloudinarySlotManager;
 import streammessenger.call.CallSignalingHandler;
+import streammessenger.config.ServerConfig;
 import streammessenger.db.DatabaseManager;
 import streammessenger.features.CollaborativeNoteHandler;
 import streammessenger.roster.RosterItem;
@@ -65,11 +66,13 @@ public final class IQHandler implements StanzaHandler {
     private final PubSubHandler pubSubHandler;
 
     public IQHandler(DatabaseManager db, SessionRegistry registry,
-                     RosterManager rosterManager, CallSignalingHandler callSignalingHandler, CollaborativeNoteHandler handler, CRDTNoteHandler crdtHandler) {
+                     RosterManager rosterManager, CallSignalingHandler callSignalingHandler,
+                     CollaborativeNoteHandler handler,
+                     CRDTNoteHandler crdtHandler, ServerConfig config) {
         this.bindHandler = new ResourceBindHandler(db);
         this.rosterManager = rosterManager;
         this.callSignalingHandler = callSignalingHandler;
-        this.cloudinarySlotManager = new CloudinarySlotManager();
+        this.cloudinarySlotManager = new CloudinarySlotManager(config);
         this.privacyHandler = new PrivacyHandler(db, registry);
         this.collaborativeNoteHandler = handler;
         this.crdtNoteHandler = crdtHandler;

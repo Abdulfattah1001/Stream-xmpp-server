@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
+import java.util.logging.Logger;
 
 /**
  * Parses SASL PLAIN authentication (RFC 4616).
@@ -17,6 +18,7 @@ import java.util.concurrent.ExecutionException;
  * Never offer PLAIN over unencrypted connections.
  */
 public final class SASLMechanism {
+    private final Logger logger = Logger.getLogger(SASLMechanism.class.getName());
     private SASLMechanism() {}
     public record Credentials(String username, String password) {}
 

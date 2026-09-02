@@ -8,6 +8,10 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.Properties;
 
+/**
+ * Sets up and initialize firebase using the credentials
+ * stored in the config.properties
+ */
 public class FirebaseSetup {
     public static void setup() throws IOException {
         FileInputStream fis = new FileInputStream("config.properties");

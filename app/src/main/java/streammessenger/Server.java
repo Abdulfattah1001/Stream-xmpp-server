@@ -272,7 +272,7 @@ public class Server {
         this.streamProcessor = new XMPPStreamProcessor(
                 db, registry, authManager, rosterManager, metrics, connectionPool,
                 new CarbonHandler(carbonManager, deviceManager),
-                multiDeviceHandler, callHandler);
+                multiDeviceHandler, callHandler, config);
 
         this.sessionReaper = new SessionReaper(
                 registry, metrics,

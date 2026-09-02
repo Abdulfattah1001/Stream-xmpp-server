@@ -15,6 +15,9 @@ import streammessenger.db.DatabaseManager;
 
 /**
  * Lightweight HTTP API for registration and session token issuance.
+ * Note that the registration can also be bypassed by using the
+ * Nodejs Server which serves as an utility Server to this one,
+ * it handles profile picture image upload, OTP generation e.t.c
  * <p>
  * Endpoints:
  *   POST /auth/register  → Register new user with Firebase token
@@ -24,7 +27,7 @@ import streammessenger.db.DatabaseManager;
  *   POST /auth/links     -> Generate, revoke or reset a link for a group
  * <p>
  * Uses Java's built-in HttpServer (no framework needed).
- * In production: put Nginx in front for TLS termination.
+ * In production: Nginx is put in front for TLS termination.
  */
 public final class AuthController {
     private static final Logger logger = Logger.getLogger(AuthController.class.getName());
@@ -87,7 +90,7 @@ public final class AuthController {
      * <p>
      * <pre>{
      *   "session_token": "st_abc123...",
-     *   "jid":           "u_7f3a9b2c@yourdomain.com",
+     *   "jid":           "u_7f3a9b2c@omnyrex.com",
      *   "user_id":       "u_7f3a9b2c",
      *   "expires_at":    "2024-12-31T00:00:00Z"
      * }</pre>
@@ -191,7 +194,7 @@ public final class AuthController {
      * Response:
      * {
      *   "session_token": "st_xyz789...",
-     *   "jid":           "u_7f3a9b2c@yourdomain.com",
+     *   "jid":           "u_7f3a9b2c@omnyrex.com",
      *   "user_id":       "u_7f3a9b2c",
      *   "expires_at":    "2025-01-31T00:00:00Z"
      * }
@@ -358,7 +361,7 @@ public final class AuthController {
      *   "matches": [
      *     {
      *       "phone_hash":    "sha256_of_+2348012345678",
-     *       "jid":           "u_7f3a9b2c@yourdomain.com",
+     *       "jid":           "u_7f3a9b2c@omnyrex.com",
      *       "display_name":  "Alice"
      *     }
      *   ]

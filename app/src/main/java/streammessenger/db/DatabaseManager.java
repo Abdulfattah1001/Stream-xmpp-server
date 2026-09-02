@@ -1,8 +1,6 @@
 package streammessenger.db;
 
 
-import org.slf4j.LoggerFactory;
-
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.sql.*;
@@ -13,8 +11,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.logging.Logger;
-
-import javax.swing.text.html.Option;
 
 import streammessenger.api.GroupController;
 import streammessenger.group.repository.GroupRepository;
@@ -27,7 +23,6 @@ public final class DatabaseManager {
             Logger.getLogger(DatabaseManager.class.getName());
 
     private static final SecureRandom secureRandom = new SecureRandom();
-    private static final org.slf4j.Logger log = LoggerFactory.getLogger(DatabaseManager.class);
 
     private final ConnectionPool pool;
 
@@ -119,18 +114,16 @@ public final class DatabaseManager {
      * @param displayName   Optional display name chosen by user
      * @return The user record (new or existing)
      */
-    public UserRecord registerUserPostgresSQL(String firebaseUid,
-                                    String phoneNumber,
-                                    String displayName) throws SQLException {
+    public UserRecord registerUser(String firebaseUid,
+                                   String phoneNumber,
+                                   String displayName) throws SQLException {
 
         // Check if this Firebase UID is already registered
         // (handles re-registration after app reinstall)
         UserRecord existing = getUserByFirebaseUid(firebaseUid);
         if (existing != null) {
-            logger.info("Re-registration for existing user: "
-                    + existing.userId());
+            logger.info("Re-registration for existing user: " + existing.userId());
 
-            // Update display name if provided and changed
             if (displayName != null
                     && !displayName.equals(existing.displayName())) {
                 updateDisplayName(existing.userId(), displayName);
@@ -147,91 +140,11 @@ public final class DatabaseManager {
                     + "existing userId=" + byPhone.userId()
                     + " new firebaseUid=" + firebaseUid);
 
-            // Update the firebase_uid (phone transferred to new account)
             updateFirebaseUid(byPhone.userId(), firebaseUid);
             return byPhone;
         }
 
         // Truly new user - generate ID and create record
-        String userId      = generateUserId(); //Server generated uid different from firebase uid
-        String jid         = userId + "@" + xmppDomain;
-        String phoneHash   = hashPhone(phoneNumber);
-        String encryptedPhone = encryptPhone(phoneNumber);
-
-        String sql = """
-            INSERT INTO users (
-                user_id,
-                firebase_uid,
-                phone_number,
-                phone_number_hash,
-                jid,
-                display_name,
-                active,
-                phone_verified,
-                created_at,
-                updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, true, true, NOW(), NOW())
-            RETURNING id, user_id, jid, display_name, active
-            """;
-
-        try (Connection conn = pool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-
-            stmt.setString(1, userId);
-            stmt.setString(2, firebaseUid);
-            stmt.setString(3, encryptedPhone);
-            stmt.setString(4, phoneHash);
-            stmt.setString(5, jid);
-            stmt.setString(6, displayName);
-
-            try (ResultSet rs = stmt.executeQuery()) {
-                if (!rs.next()) {
-                    throw new SQLException("INSERT returned no rows");
-                }
-
-                conn.commit();
-
-                logger.info("New user registered: userId=" + userId
-                        + " jid=" + jid);
-
-                return new UserRecord(
-                        rs.getLong("id"),
-                        rs.getString("user_id"),
-                        rs.getString("jid"),
-                        rs.getString("display_name"),
-                        "",
-                        rs.getBoolean("active")
-                );
-            }
-        }
-    }
-
-    public UserRecord registerUser(String firebaseUid,
-                                   String phoneNumber,
-                                   String displayName) throws SQLException {
-
-        UserRecord existing = getUserByFirebaseUid(firebaseUid);
-        if (existing != null) {
-            logger.info("Re-registration for existing user: " + existing.userId());
-
-            if (displayName != null
-                    && !displayName.equals(existing.displayName())) {
-                updateDisplayName(existing.userId(), displayName);
-            }
-
-            return existing;
-        }
-
-        UserRecord byPhone = getUserByPhoneHash(hashPhone(phoneNumber));
-        if (byPhone != null) {
-            logger.warning("Phone number already registered: "
-                    + "existing userId=" + byPhone.userId()
-                    + " new firebaseUid=" + firebaseUid);
-
-            updateFirebaseUid(byPhone.userId(), firebaseUid);
-            return byPhone;
-        }
-
         String userId      = generateUserId();
         String jid         = userId + "@" + xmppDomain;
         String phoneHash   = hashPhone(phoneNumber);
@@ -347,60 +260,6 @@ public final class DatabaseManager {
         }
     }
 
-    public Optional<String> getUserContactFirebaseId(String uid){
-        String sql = """
-            SELECT user_id
-            FROM users
-            WHERE firebase_uid = ?
-            """;
-
-        try (Connection conn = pool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-
-            stmt.setString(1, uid);
-
-            try (ResultSet rs = stmt.executeQuery()) {
-                if (!rs.next()) {
-                    logger.fine("Auth: unknown user=" + uid);
-                    return Optional.empty();
-                }
-
-                return Optional.of(rs.getString("user_id"));
-            }
-
-        } catch (SQLException e) {
-            logger.severe("DB error during authentication: " + e.getMessage());
-            return Optional.empty();
-        }
-    }
-
-    public Optional<String> getUserFirebaseIdByContact(String uid){
-        String sql = """
-            SELECT firebase_uid
-            FROM users
-            WHERE user_id = ?
-            """;
-
-        try (Connection conn = pool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-
-            stmt.setString(1, uid);
-
-            try (ResultSet rs = stmt.executeQuery()) {
-                if (!rs.next()) {
-                    logger.fine("Auth: unknown user=" + uid);
-                    return Optional.empty();
-                }
-
-                return Optional.of(rs.getString("firebase_uid"));
-            }
-
-        } catch (SQLException e) {
-            logger.severe("DB error during authentication: " + e.getMessage());
-            return Optional.empty();
-        }
-    }
-
     public UserRecord getUserByUserId(String userId) {
         String sql = """
             SELECT id, user_id, jid, display_name, active
@@ -438,22 +297,6 @@ public final class DatabaseManager {
         return Optional.empty();
     }
 
-    public void updateUserLastSeen(String userId){
-        String sql = "UPDATE users SET last_seen = UTC_TIMESTAMP() WHERE user_id = ?";
-
-
-        try (Connection conn = pool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-
-            stmt.setString(1, userId);
-            stmt.executeUpdate();
-            conn.commit();
-
-        } catch (SQLException e) {
-            logger.warning("updateUserLastSeen error: " + e.getMessage());
-        }
-    }
-
     public void updateGroupMemberLastSyncVersion(String userId, String groupId, int version) {
         String sql = "UPDATE group_members SET last_synced_version = ? WHERE group_id = ? AND user_id = ?";
         try(Connection connection = pool.getConnection()){
@@ -469,7 +312,7 @@ public final class DatabaseManager {
     }
 
     public Optional<String> getUserLastSeen(String userId) {
-        String sql = "SELECT last_seen FROM users WHERE user_id = ?";
+        String sql = "SELECT last_seen FROM users WHERE user_id = ? LIMIT 1";
 
         try (Connection conn = pool.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
@@ -610,8 +453,8 @@ public final class DatabaseManager {
      * on-the-fly before sending them out over XMPP.
      */
     private String extractChangedFieldsOnly(String rawJson) {
-        // E.g., Use Jackson/Gson to parse and return minimal mutations if necessary.
-        // If you already store field-level increments natively on write, just return it.
+        // TODO: Use Jackson/Gson to parse and return minimal mutations if necessary.
+        // If it is already store field-level increments natively on write, just return it.
         return rawJson;
     }
 
@@ -1088,7 +931,6 @@ public final class DatabaseManager {
     // =========================================================================
     // Updates
     // =========================================================================
-
     public void updateLastSeen(String userId) {
         String sql = """
             UPDATE users

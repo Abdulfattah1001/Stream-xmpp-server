@@ -102,7 +102,6 @@ public final class ConnectionHandler implements Runnable {
             // Move directly to STARTTLS_NEGOTIATED so SASL features are advertised immediately.
             session.setSessionState(SessionState.STARTTLS_NEGOTIATED);
             session.setProxyTls(true);
-            logger.info("Nginx proxy TLS connection");
             try {
                 processStream(session);
             } catch (StartTLSException nested) {
@@ -113,7 +112,6 @@ public final class ConnectionHandler implements Runnable {
                 );
             }
         } else {
-            logger.info("Direct connectioin on port 222");
             // Fallback: Direct connection on 5222 requires standard in-band STARTTLS
             try {
                 // Phase 1: Plain stream - expect STARTTLS

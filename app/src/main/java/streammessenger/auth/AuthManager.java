@@ -3,6 +3,7 @@ package streammessenger.auth;
 
 import java.util.Base64;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 
 import streammessenger.db.DatabaseManager;
@@ -46,8 +47,8 @@ public final class AuthManager {
 
     // Track failed attempts per IP for rate limiting
     // IP → [failureCount, firstFailureTime]
-    private final java.util.concurrent.ConcurrentHashMap<String, long[]> failureTracker =
-            new java.util.concurrent.ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, long[]> failureTracker =
+            new ConcurrentHashMap<>();
 
     public AuthManager(DatabaseManager db, SessionRegistry registry,
                        ServerMetrics metrics, SessionTokenService sessionTokenService, FirebaseTokenVerifier firebaseTokenVerifier) {
@@ -83,7 +84,7 @@ public final class AuthManager {
         }
 
         // 2. Require TLS - PLAIN over plain text is a security violation [Armed robber case to be precise]
-        if (session.isSecure()/*getSSLSocket()== null*/) {
+        if (!session.isSecure()/*getSSLSocket()== null*/) {
             metrics.authFailure();
             throw new AuthenticationException(
                     "SASL PLAIN requires TLS negotiation first",
@@ -107,7 +108,6 @@ public final class AuthManager {
         //SASLMechanism.Credentials creds;
         Optional<String> uid;
         try {
-            logger.info("Validating user firebase Auth token");
             uid = SASLMechanism.decodeFirebaseAuthToken(payload);
             //creds = SASLMechanism.decodePlain(payload);
         } catch (IllegalArgumentException e) {
@@ -121,8 +121,6 @@ public final class AuthManager {
 
         // 5. Verify credentials
 
-        //Optional<String> contactId = db.authenticateUser(
-          //      creds.username(), creds.password());
         assert uid.isPresent();
         Optional<String> contactId = db.getUserContactId(uid.get());
 
@@ -131,7 +129,7 @@ public final class AuthManager {
             metrics.authFailure();
             session.setSessionState(SessionState.STARTTLS_NEGOTIATED);
             throw new AuthenticationException(
-                    "Invalid credentials for: " /*+ creds.username()*/,
+                    "Invalid credentials for: ",
                     AuthenticationException.Reason.INVALID_CREDENTIALS
             );
         }
@@ -222,9 +220,9 @@ public final class AuthManager {
         metrics.sessionAuthenticated();
 
         logger.info("Authenticated:" +
-                " ContactId="+session.getContactId() +  // _usevc@server_name.com
+                " ContactId="+session.getContactId() +  // _usevc@omnyrex.com
                 " userId="+session.getUid()+ // u_ckwbcib
-                " Jid="+session.getJid() + // u_cwuicwyv@server_name.com/resource_name
+                " Jid="+session.getJid() + // u_cwuicwyv@omnyrex.com/resource_name
                 " sessionId="+session.getSessionId()+ // SessionID was set when accepting the session
                 " DeviceId="+session.getDeviceId()+ // Device ID needs to be fetched depending the token authenticated with
                 " Resource="+session.getResource() +  // Resource is still null at this point, no resource bound yet

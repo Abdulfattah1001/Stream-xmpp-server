@@ -1,46 +1,9 @@
--- Users table
-CREATE TABLE users (
-    id              BIGSERIAL PRIMARY KEY,
-    username        VARCHAR(255) NOT NULL UNIQUE,
-    contact_id      VARCHAR(255) NOT NULL UNIQUE, -- bare JID: user@domain
-    password_hash   VARCHAR(255) NOT NULL,         -- BCrypt hash
-    active          BOOLEAN NOT NULL DEFAULT true,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_seen       TIMESTAMPTZ,
-    avatar_hash     VARCHAR(255)
-);
-
--- Roster (contact list)
-CREATE TABLE roster_items (
-    id              BIGSERIAL PRIMARY KEY,
-    owner_id        BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    contact_jid     VARCHAR(255) NOT NULL,
-    name            VARCHAR(255),
-    subscription    VARCHAR(16) NOT NULL DEFAULT 'none', -- none|from|to|both|remove
-    ask             VARCHAR(16),                          -- subscribe (pending outbound)
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(owner_id, contact_jid)
-);
-
 -- Roster groups (folders)
 CREATE TABLE roster_groups (
     id              BIGSERIAL PRIMARY KEY,
     roster_item_id  BIGINT NOT NULL REFERENCES roster_items(id) ON DELETE CASCADE,
     group_name      VARCHAR(255) NOT NULL
 );
-
--- Offline message storage
-CREATE TABLE offline_messages (
-    id              BIGSERIAL PRIMARY KEY,
-    from_jid        VARCHAR(255) NOT NULL,
-    to_contact_id   VARCHAR(255) NOT NULL,
-    stanza_id       VARCHAR(255),
-    body            TEXT NOT NULL,
-    full_stanza     TEXT,          -- Store full XML for XEP-0203 delayed delivery
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX idx_offline_to ON offline_messages(to_contact_id);
 
 -- Message archive (XEP-0313)
 CREATE TABLE message_archive (
@@ -53,6 +16,7 @@ CREATE TABLE message_archive (
     full_stanza     TEXT NOT NULL,
     timestamp       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
 CREATE INDEX idx_archive_owner     ON message_archive(owner_jid, timestamp);
 CREATE INDEX idx_archive_owner_jid ON message_archive(owner_jid, from_jid, timestamp);
 
@@ -75,6 +39,7 @@ CREATE TABLE sm_sessions (
     expires_at      TIMESTAMPTZ NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
 CREATE INDEX idx_sm_contact ON sm_sessions(contact_id);
 
 -- Active sessions (for clustering - optional)
@@ -89,6 +54,7 @@ CREATE TABLE active_sessions (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_activity   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
 CREATE INDEX idx_active_contact ON active_sessions(contact_id);
 
 -- Admin audit log
@@ -197,23 +163,6 @@ CREATE TABLE message_edits (
 CREATE INDEX idx_edits_message ON message_edits(message_id);
 
 -- Scheduled messages
---- POSTGRESQL
-CREATE TABLE scheduled_messages (
-    id                  BIGSERIAL PRIMARY KEY,
-    message_id          UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
-    from_user_id        VARCHAR(32) NOT NULL REFERENCES users(user_id),
-    to_jid              VARCHAR(255) NOT NULL,
-    message_type        VARCHAR(20) NOT NULL DEFAULT 'text',
-    encrypted_content   TEXT NOT NULL,
-    iv                  VARCHAR(32) NOT NULL,
-    media_storage_key   VARCHAR(500),
-    mime_type           VARCHAR(100),
-    scheduled_for       TIMESTAMPTZ NOT NULL,
-    sent_at             TIMESTAMPTZ,
-    cancelled_at        TIMESTAMPTZ,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
 --- MySQL
 CREATE TABLE scheduled_messages (
        id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -232,7 +181,7 @@ CREATE TABLE scheduled_messages (
 
        CONSTRAINT fk_user
            FOREIGN KEY (from_user_id) REFERENCES users(user_id)
-   );
+);
 
 CREATE INDEX idx_scheduled_pending ON scheduled_messages(scheduled_for)
     WHERE sent_at IS NULL AND cancelled_at IS NULL;
@@ -248,8 +197,8 @@ CREATE TABLE polls (
     multiple_choice     BOOLEAN NOT NULL DEFAULT false,
     -- anonymous: voters are not shown
     anonymous           BOOLEAN NOT NULL DEFAULT false,
-    expires_at          TIMESTAMPTZ,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    expires_at          TIMESTAMP,
+    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE poll_options (
@@ -267,7 +216,7 @@ CREATE TABLE poll_votes (
     option_id           BIGINT NOT NULL REFERENCES poll_options(id)
                             ON DELETE CASCADE,
     voter_user_id       VARCHAR(32) NOT NULL REFERENCES users(user_id),
-    voted_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    voted_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(poll_id, option_id, voter_user_id)
 );
 
@@ -283,7 +232,7 @@ CREATE TABLE disappearing_message_settings (
     -- Duration in seconds: 0=off, 86400=1day, 604800=1week, 2592000=30days
     duration_seconds    INT NOT NULL DEFAULT 0,
     set_by_user_id      VARCHAR(32) NOT NULL REFERENCES users(user_id),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT disappearing_target CHECK (
         (user_id_b IS NOT NULL AND group_id IS NULL) OR
@@ -294,7 +243,6 @@ CREATE TABLE disappearing_message_settings (
 -- ============================================================================
 -- PUSH NOTIFICATIONS
 -- ============================================================================
-
 CREATE TABLE push_notifications_log (
     id                  BIGSERIAL PRIMARY KEY,
     to_user_id          VARCHAR(32) NOT NULL REFERENCES users(user_id),
@@ -304,7 +252,7 @@ CREATE TABLE push_notifications_log (
     notification_type   VARCHAR(30) NOT NULL,
     -- Reference to the triggering entity
     reference_id        VARCHAR(255),
-    sent_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    sent_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     -- FCM/APNs response
     success             BOOLEAN NOT NULL DEFAULT false,
     error_code          VARCHAR(100),
@@ -334,9 +282,9 @@ CREATE TABLE calls (
     -- WebRTC signaling (ICE candidates, SDP offers stored as JSON)
     signaling_data      JSONB,
 
-    started_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    answered_at         TIMESTAMPTZ,
-    ended_at            TIMESTAMPTZ,
+    started_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    answered_at         TIMESTAMP,
+    ended_at            TIMESTAMP,
 
     -- Duration in seconds (null if not answered)
     duration_seconds    INT,
@@ -390,7 +338,7 @@ CREATE TABLE blogs (
     -- Examples: 7 days for temporary announcements
     --           30 days for event posts
     --           null for permanent articles
-    expires_at          TIMESTAMPTZ,
+    expires_at          TIMESTAMP,
 
     -- Engagement
     view_count          BIGINT NOT NULL DEFAULT 0,
@@ -400,12 +348,12 @@ CREATE TABLE blogs (
 
     -- Featured by admin
     featured            BOOLEAN NOT NULL DEFAULT false,
-    featured_at         TIMESTAMPTZ,
+    featured_at         TIMESTAMP,
 
-    published_at        TIMESTAMPTZ,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at          TIMESTAMPTZ,
+    published_at        TIMESTAMP,
+    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at          TIMESTAMP,
 
     UNIQUE(author_user_id, slug)
 );
@@ -746,7 +694,7 @@ CREATE TABLE device_one_time_keys (
     user_id         VARCHAR(32) NOT NULL REFERENCES users(user_id),
     key_id          INT NOT NULL,
     public_key      TEXT NOT NULL,
-    claimed_at      TIMESTAMPTZ,
+    claimed_at      TIMESTAMP,
     UNIQUE(device_id, key_id)
 );
 

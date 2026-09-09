@@ -77,7 +77,7 @@ public final class ScheduledMessageHandler implements StanzaHandler {
     private final ConnectionPool pool;
     private final DatabaseManager db;
     private final SessionRegistry registry;
-    private final MessageHandler messageHandler;
+    private final EncryptedMessageHandler encryptedMessageHandler;
 
     // Background scheduler that fires scheduled messages
     private final ScheduledExecutorService scheduler;
@@ -89,11 +89,11 @@ public final class ScheduledMessageHandler implements StanzaHandler {
     public ScheduledMessageHandler(ConnectionPool pool,
                                     DatabaseManager db,
                                     SessionRegistry registry,
-                                    MessageHandler messageHandler) {
+                                    EncryptedMessageHandler messageHandler) {
         this.pool           = pool;
         this.db             = db;
         this.registry       = registry;
-        this.messageHandler = messageHandler;
+        this.encryptedMessageHandler = messageHandler;
 
         this.scheduler = Executors.newScheduledThreadPool(2, r -> {
             Thread t = new Thread(r, "scheduled-msg");

@@ -40,6 +40,7 @@ import streammessenger.stanza.EncryptedMessageHandler;
 import streammessenger.stanza.IQHandler;
 import streammessenger.stanza.PresenceHandler;
 import streammessenger.stanza.ReactionHandler;
+import streammessenger.stanza.ScheduledMessageHandler;
 import streammessenger.stanza.StanzaHandler;
 import streammessenger.stanza.StatusHandler;
 import streammessenger.stanza.VerifiedAccountHandler;
@@ -101,18 +102,19 @@ public final class XMPPStreamProcessor {
         this.multiDeviceHandler = multiDeviceMessageHandler;
 
         this.mucDomain = "conference"+config.getDomainName();
+        EncryptedMessageHandler encryptedMessageHandler = new EncryptedMessageHandler(registry, db, metrics, reactionHandler, crdtNoteHandler);
 
         // Build handler registry - one instance per handler, shared across all connections
         this.handlers = new HashMap<>();
         this.handlers.put("auth",     new AuthHandler(authManager));
         //TODO: Not encrypted message:this.handlers.put("message",  new MessageHandler(registry, db, metrics));
-        this.handlers.put("message", new EncryptedMessageHandler(registry, db, metrics, reactionHandler, crdtNoteHandler));
+        this.handlers.put("message", encryptedMessageHandler);
         this.handlers.put("presence", new PresenceHandler(registry, db));
         this.handlers.put("iq",       new IQHandler(db, registry, rosterManager, callHandler, collaborativeNoteHandler, crdtNoteHandler, config, pool));
         this.handlers.put("status-iq",new StatusHandler(db, registry));
         this.handlers.put("call",     callHandler);
         this.handlers.put("note",     collaborativeNoteHandler);
-        //this.handlers.put("schedule", new ScheduledMessageHandler(pool, db, registry, (MessageHandler) this.handlers.get("message")));
+        this.handlers.put("schedule", new ScheduledMessageHandler(pool, db, registry, encryptedMessageHandler));
         this.handlers.put("verified", new VerifiedAccountHandler(pool, registry));
         this.handlers.put("blog", new BlogHandler(db, registry, new BlogDatabaseManager(pool)));
     }

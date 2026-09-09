@@ -167,14 +167,14 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                                      String toContactId,
                                      String type,
                                      String messageId) {
-        logger.info("The sender of the message is: "+sender.getUid() + " and the receiver is: "+toContactId);
+        logger.info("The sender of the message is: "+sender.getUid() + " and his resource is " + sender.getResource() + " and the receiver is: "+toContactId);
         // Check the message keys
-        String identityKey = parsed.identityKey();
+        /*TODO: To  be uncomment later String identityKey = parsed.identityKey();
         Optional<String> key = db.getIdentityKey(toContactId);
         if(key.isPresent() &&!key.get().equals(identityKey)) {
             sender.writeXML(String.format("<message type='INVALID_KEY' id='%s' from='%s'> </message>", messageId, toContactId));
             return;
-        }
+        }*/
         // Build the full stanza XML to forward/store
         String stanzaXml = buildEncryptedStanza(
                 messageId, sender.getUid(), toContactId,
@@ -188,11 +188,7 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         Optional<Session> recipientSession = registry.getByUserId(toContactId);
 
         if (recipientSession.isPresent() && recipientSession.get().isAuthenticated()) {
-            logger.info("The receiver is online, routing the message ...");
             delivered = recipientSession.get().writeXML(stanzaXml);
-            if(delivered) logger.info("Message sent"); else logger.info("Message not sent");
-        } else {
-            logger.info("The receiver is offline");
         }
 
         if (delivered) {

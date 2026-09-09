@@ -112,18 +112,6 @@ public final class ServerConfig {
             logger.info("Loading the default ssl context, and lets Nginx manages the TLS");
             sslContext = SSLContext.getDefault();
         }
-        /*try {
-            if(isDev){
-                sslContext = buildSSLContext(certPath, ksPassword, keyPassword);
-            }else {
-                sslContext = SSLContext.getDefault();
-                logger.info("Loaded the default ssl context, and lets Nginx manages the TLS");
-            }
-        } finally {
-            // Zero out secrets immediately after use for security purposes WARNING
-            Arrays.fill(ksPassword, '\0');
-            Arrays.fill(keyPassword, '\0');
-        }*/
 
         logger.info("SSLContext initialized [env=" + env + ", cert=" + certPath + "]");
 

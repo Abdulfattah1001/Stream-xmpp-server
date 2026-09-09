@@ -129,7 +129,7 @@ public class Server {
     private final VerifiedAccountHandler verifiedHandler;
     private final TranslationService translationService;
     private final CollaborativeNoteHandler noteHandler;
-    private final ScheduledMessageHandler scheduledMsgHandler;
+    //private final ScheduledMessageHandler scheduledMsgHandler;
     private final ReactionHandler reactionHandler;
     private final PhoneEncryption phoneEncryption;
     private final RateLimiter rateLimiter;
@@ -139,10 +139,6 @@ public class Server {
 
     //MUC
     private final GroupRepository groupRepository;
-    //private final GroupRegistry groupRegistry;
-    //private final GroupService groupService;
-    //private final MembershipService membershipService;
-    //private final InvitationService invitationService;
     private final GroupStanzaHandler groupStanzaHandler;
     //private final SenderKeyManager senderKeyManager;
     private final PrivacyEngine privacyEngine;
@@ -299,9 +295,9 @@ public class Server {
                 connectionPool, registry);
 
         // Scheduled messages
-        this.scheduledMsgHandler = new ScheduledMessageHandler(
+        /*this.scheduledMsgHandler = new ScheduledMessageHandler(
                 connectionPool, db, registry,
-                new MessageHandler(registry, db, metrics));
+                );*/
 
         // Reactions
         this.reactionHandler = new ReactionHandler(connectionPool, registry);
@@ -532,7 +528,7 @@ public class Server {
         streamProcessor.shutdown();
         cleanupTask.stop();
         callHandler.shutdown();
-        scheduledMsgHandler.shutdown();
+        //scheduledMsgHandler.shutdown();
         translationService.shutdown();
         pushService.shutdown();
         connectionPool.shutdown();

@@ -2211,7 +2211,7 @@ public final class DatabaseManager {
                     ?,
                     f.user_id,
                     t.user_id,
-                    ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?,
                     'pending',
                     true,
                     NOW(),

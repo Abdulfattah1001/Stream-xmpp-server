@@ -7,7 +7,9 @@ import  streammessenger.session.SessionRegistry;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.logging.Logger;
 
 /**
@@ -42,7 +44,7 @@ public final class RosterManager {
      * Returns the user's complete contact list.
      * Supports roster versioning: if client sends ver='X' and we agree,
      * we can send an empty result meaning "your cached roster is current".
-     *<p>
+     * <p>
      * @param contactId The requesting user's bare JID
      * @param iqId      The IQ stanza ID (must be echoed in response)
      * @param clientVer The roster version the client has cached (may be null)
@@ -146,6 +148,10 @@ public final class RosterManager {
         }
     }
 
+
+    public Set<String> contactsOf(String uid) {
+        return Collections.emptySet();
+    }
     // ==========================================================/===============
     // Subscription state management
     // Called by SubscriptionHandler when subscription state changes

@@ -2,8 +2,6 @@ package streammessenger.group.service;
 
 import streammessenger.group.model.*;
 import streammessenger.group.repository.GroupRepository;
-import streammessenger.muc.model.GroupEventType;
-import streammessenger.muc.model.GroupSystemEvent;
 import streammessenger.session.Session;
 import streammessenger.session.SessionRegistry;
 

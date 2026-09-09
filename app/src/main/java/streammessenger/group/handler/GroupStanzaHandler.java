@@ -3,8 +3,6 @@ package streammessenger.group.handler;
 import streammessenger.group.model.*;
 import streammessenger.group.repository.GroupRepository;
 import streammessenger.group.service.*;
-import streammessenger.muc.model.GroupEventType;
-import streammessenger.muc.model.GroupSystemEvent;
 import streammessenger.session.Session;
 import streammessenger.session.SessionRegistry;
 import streammessenger.stanza.StanzaHandler;
@@ -123,7 +121,7 @@ public final class GroupStanzaHandler implements StanzaHandler {
             return;
         }
 
-        String groupJid = bareJid(to); // gr_kjcqiv@conference.omnyrex.com
+        String groupJid = bareJid(to);
         String groupId  = groupJid.substring(0, groupJid.indexOf('@'));
 
         ParsedGroupMessage parsed = parseGroupMessage(reader);

@@ -200,6 +200,7 @@ public final class AuthManager {
 
         // 5. Verify credentials
         SessionTokenService.ValidatedToken validate = sessionTokenService.validate(rawToken);
+
         if(validate == null){
             recordFailure(clientIp);
             metrics.authFailure();

@@ -1,22 +1,19 @@
 package streammessenger.stanza;
 
 
-import org.json.XML;
-
 import javax.xml.stream.XMLEventReader;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.events.StartElement;
 import javax.xml.stream.events.XMLEvent;
 import javax.xml.namespace.QName;
 
-import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
 import java.util.logging.Logger;
 
 import streammessenger.api.CloudinarySlotManager;
 import streammessenger.call.CallSignalingHandler;
 import streammessenger.config.ServerConfig;
+import streammessenger.db.ConnectionPool;
 import streammessenger.db.DatabaseManager;
 import streammessenger.features.CollaborativeNoteHandler;
 import streammessenger.roster.RosterItem;
@@ -38,6 +35,8 @@ import javax.xml.stream.events.Attribute;
  * <p>
  * Stateless singleton.
  */
+
+@SuppressWarnings("unused")
 public final class IQHandler implements StanzaHandler {
 
     private static final Logger logger = Logger.getLogger(IQHandler.class.getName());
@@ -56,6 +55,7 @@ public final class IQHandler implements StanzaHandler {
     private static final String NS_DISCO     = "http://jabber.org/protocol/disco#info";
     private static final String NS_SESSION   = "urn:ietf:params:xml:ns:xmpp-session";
     private static final String NS_MUC = "http://jabber.org/protocol/muc";
+    private static final String BLOCKING_NS = "urn:xmpp:blocking";
     private final ResourceBindHandler bindHandler;
     private final CallSignalingHandler callSignalingHandler;
     private final RosterManager rosterManager;
@@ -64,12 +64,13 @@ public final class IQHandler implements StanzaHandler {
     private final CollaborativeNoteHandler collaborativeNoteHandler;
     private final CRDTNoteHandler crdtNoteHandler;
     private final PubSubHandler pubSubHandler;
+    private final BlockHandler blockHandler;
 
     public IQHandler(DatabaseManager db, SessionRegistry registry,
                      RosterManager rosterManager, CallSignalingHandler callSignalingHandler,
                      CollaborativeNoteHandler handler,
-                     CRDTNoteHandler crdtHandler, ServerConfig config) {
-        this.bindHandler = new ResourceBindHandler(db);
+                     CRDTNoteHandler crdtHandler, ServerConfig config, ConnectionPool pool) {
+        this.bindHandler = new ResourceBindHandler(db, registry, pool);
         this.rosterManager = rosterManager;
         this.callSignalingHandler = callSignalingHandler;
         this.cloudinarySlotManager = new CloudinarySlotManager(config);
@@ -77,6 +78,7 @@ public final class IQHandler implements StanzaHandler {
         this.collaborativeNoteHandler = handler;
         this.crdtNoteHandler = crdtHandler;
         this.pubSubHandler = new PubSubHandler(db, registry);
+        this.blockHandler = new BlockHandler(db, registry);
     }
 
     @Override
@@ -109,6 +111,33 @@ public final class IQHandler implements StanzaHandler {
 
             case PUB_SUB_ROSTER ->  {
                 pubSubHandler.handle(element, reader, session);
+            }
+
+            case BLOCKING_NS ->  {
+                /* <iq type='set'>
+                *   <block xmlns='urn:xmpp:blocking'>
+                *     <item jid='juliet@example.com'/>
+                *   </block>
+                * </iq>*/
+                logger.info("The current user " + session.getUid() + " is trying to block a user");
+                blockHandler.handle(element, reader, session);
+                /*try{
+                    while(reader.hasNext()){
+                        XMLEvent event = reader.nextEvent();
+                        if(event.isStartElement()) {
+                            String name = event.asStartElement().getName().getLocalPart();
+                            if(name.equals("item")) {
+                                String jid = getAttr(event.asStartElement(), "jid");
+                                logger.info("The user to block is: "+jid);
+                                session.writeXML(String.format("<iq type='result' id='%s'>", id));
+                            }
+                        }
+
+                        if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("iq")) break;
+                    }
+                }catch (XMLStreamException exception) {
+                    logger.info("Error parsing block stanza: "+exception.getMessage());
+                }*/
             }
 
             case NS_ROSTER -> handleRosterIQ(type, id, child, reader, session);
@@ -178,7 +207,7 @@ public final class IQHandler implements StanzaHandler {
             }
 
             case NS_MUC ->  {
-                logger.info("Handling Group or room creatioin");
+                logger.info("Handling Group or room creation");
                 consumeElement(reader);
             }
 
@@ -202,7 +231,7 @@ public final class IQHandler implements StanzaHandler {
                 @SuppressWarnings("unused")
                 String ver = child.getAttribute("ver"); // roster version (may be null)
                 consumeElement(reader); // consume the <query/> element
-                rosterManager.handleRosterGet(session.getContactId(), iqId, ver, session);
+                // TODO: rosterManager.handleRosterGet(session.getContactId(), iqId, ver, session);
             }
 
             case "set" -> {

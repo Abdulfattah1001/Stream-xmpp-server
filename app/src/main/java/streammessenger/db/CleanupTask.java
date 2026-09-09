@@ -172,13 +172,9 @@ public final class CleanupTask {
 
     /**
      * Deletes offline messages that have exceeded the 30-day TTL.
-     *
+     * <p>
      * These are messages that were stored because the recipient
      * was offline and never came back online within 30 days.
-     *
-     * In a real app you'd want to:
-     *   1. Send a push notification before deletion ("You have unread messages")
-     *   2. Possibly notify the sender their message was never delivered
      */
     private int cleanExpiredOfflineMessages() {
         // Before deleting: find messages that need push notifications

@@ -6,6 +6,7 @@ import java.security.SecureRandom;
 import java.sql.*;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -148,6 +149,7 @@ public final class DatabaseManager {
         String userId      = generateUserId();
         String jid         = userId + "@" + xmppDomain;
         String phoneHash   = hashPhone(phoneNumber);
+
         String encryptedPhone = encryptPhone(phoneNumber);
 
         String sql = """
@@ -390,62 +392,6 @@ public final class DatabaseManager {
 
     public Optional<GroupController.ChatGroup> getGroup(String groupId){
         return Optional.empty();
-    }
-
-    public List<String> getUserGroups(String userId){
-
-        List<String> groupIds = new ArrayList<>();
-
-        String sql = """
-                SELECT group_id, last_synced_version FROM group_members WHERE user_id = ?
-                """;
-
-        try(Connection connection = pool.getConnection()){
-            PreparedStatement stmt = connection.prepareStatement(sql);
-            stmt.setString(1, userId);
-
-            ResultSet r = stmt.executeQuery();
-            while (r.next()){
-                groupIds.add(r.getString("group_id"));
-            }
-        } catch (SQLException e) {
-            logger.info("getUserGroups error: "+e.getMessage());
-        }
-
-        return groupIds;
-    }
-
-    public Map<String, Integer> getGroupsNeedingSync(String userId) {
-        Map<String, Integer> groupsToSync = new HashMap<>();
-
-        // We join the membership table with the core groups table
-        // and filter out groups that are already perfectly up-to-date
-        String sql = """
-            SELECT m.group_id, m.last_synced_version
-            FROM group_members m
-            INNER JOIN `groups` g ON m.group_id = g.group_id
-            WHERE m.user_id = ? AND g.state_version > m.last_synced_version
-            INNER JOIN group_events AS ge WHERE ge.group_id = m.group_id
-            """;
-
-        try (Connection connection = pool.getConnection();
-             PreparedStatement stmt = connection.prepareStatement(sql)) {
-
-            stmt.setString(1, userId);
-
-            try (ResultSet r = stmt.executeQuery()) {
-                while (r.next()) {
-                    groupsToSync.put(
-                            r.getString("group_id"),
-                            r.getInt("last_synced_version")
-                    );
-                }
-            }
-        } catch (SQLException e) {
-            logger.severe("getGroupsNeedingSync error: " + e.getMessage());
-        }
-
-        return groupsToSync;
     }
 
     /**
@@ -755,16 +701,14 @@ public final class DatabaseManager {
     public SessionTokenRecord getSessionToken(String tokenHash) {
         String sql = """
             SELECT
-                st.user_id,
-                u.jid,
-                st.push_token,
-                st.platform,
-                st.revoked_at,
-                st.last_used_at,
-                st.device_label
-            FROM session_tokens st
-            INNER JOIN users u ON u.user_id = st.user_id
-            WHERE st.token_hash = ?
+                s.user_id,
+                s.platform,
+                s.revoked_at,
+                s.device_label,
+                u.jid
+            FROM sessions s
+            INNER JOIN users u ON u.user_id = s.user_id
+            WHERE s.token_hash = ?
               AND u.active = true
               AND u.deleted_at IS NULL
             """;
@@ -780,9 +724,9 @@ public final class DatabaseManager {
                 Timestamp revokedAt = rs.getTimestamp("revoked_at");
 
                 return new SessionTokenRecord(
-                        rs.getString("user_id"),
-                        rs.getString("jid"),
-                        rs.getString("push_token"),
+                        rs.getString("user_id"), // The user Id  u_usetyc
+                        rs.getString("jid"), // The user contactId without the resource part u_usetyc@localhost
+                        "",
                         rs.getString("platform"),
                         revokedAt != null ? revokedAt.toInstant() : null,
                         null, // expires_at is always null (no expiry)
@@ -932,6 +876,7 @@ public final class DatabaseManager {
     // Updates
     // =========================================================================
     public void updateLastSeen(String userId) {
+        logger.info("Updating last seen for user :"+userId + "...");
         String sql = """
             UPDATE users
             SET last_seen  = NOW(),
@@ -1035,8 +980,9 @@ public final class DatabaseManager {
     ){}
 
     public List<Note> fetchUserNotes(String userId) {
-        logger.info("Fetching notes foruser : "+userId);
+
         List<Note> notes = new ArrayList<>();
+
         String sql = """
             SELECT
                 nm.note_id,
@@ -1132,11 +1078,6 @@ public final class DatabaseManager {
     // Existing methods (offline messages, roster, etc.)
     // =========================================================================
 
-    public Optional<String> authenticateUser(String userId, String token) {
-        // Delegated to SessionTokenService - kept for interface compat
-        return Optional.empty();
-    }
-
     public boolean storeOfflineMessage(String fromJid, String toContactId,
                                         String body, String stanzaId) {
         String sql = """
@@ -1223,30 +1164,6 @@ public final class DatabaseManager {
     }
 
     public List<RosterItem> getRosterItems(String ownerJid) {
-        String sqlOld = """
-                SELECT
-                    u.jid AS contact_jid,
-                    ri.nickname AS name,
-                    ri.subscription,
-                    ri.ask,
-                    COALESCE(
-                        JSON_ARRAYAGG(rg.group_name ORDER BY rg.group_name),
-                        JSON_ARRAY()
-                    ) AS groups
-                FROM roster_items ri
-                INNER JOIN users owner ON owner.jid = ?
-                LEFT JOIN users u ON u.user_id = ri.contact_user_id
-                LEFT JOIN roster_groups rg ON rg.roster_item_id = ri.id
-                WHERE ri.owner_user_id = owner.user_id
-                  AND ri.blocked = false
-                GROUP BY
-                    u.jid,
-                    ri.nickname,
-                    ri.subscription,
-                    ri.ask
-                ORDER BY u.jid;
-                """;
-
         String sql = """
                 SELECT
                     u.jid AS contact_jid,
@@ -1481,11 +1398,6 @@ public final class DatabaseManager {
         }
     }
 
-    public void extendSessionToken(String tokenHash, Instant newExpiry) {
-        // No-op - tokens don't expire
-        // Kept for interface compatibility
-    }
-
     public Optional<PrivacyHandler.Privacy> getPrivacy(String userId){
         String sql = "SELECT * FROM user_privacy WHERE user_id = ?";
         try (Connection conn = pool.getConnection();
@@ -1535,6 +1447,8 @@ public final class DatabaseManager {
 
     public boolean upsertPrivacy(String userId, PrivacyHandler.Privacy privacy) {
 
+        logger.info("Updating the user privacy");
+
         String sql = """
         INSERT INTO user_privacy (
             user_id,
@@ -1572,6 +1486,74 @@ public final class DatabaseManager {
         }
     }
 
+
+    // NEW - exceptions
+    public List<PrivacyHandler.PrivacyException> getPrivacyExceptions(String jid){
+        String sql = "SELECT * FROM privacy_exceptions WHERE owner_user _id = ?";
+        List<PrivacyHandler.PrivacyException> exceptions = new ArrayList<>();
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setString(1, jid);
+            ResultSet r = stmt.executeQuery();
+            connection.commit();
+            while(r.next()){
+                exceptions.add(new PrivacyHandler.PrivacyException(
+                        r.getString("field"),
+                        PrivacyHandler.PrivacyException.ExceptionType.valueOf(r.getString("type".toUpperCase())),
+                        r.getString("target_user_id")));
+            }
+
+            return exceptions;
+        }catch (SQLException exception){
+            logger.info("Error getPrivacyExceptions");
+            return exceptions;
+        }
+    }
+
+    // NEW - blocking
+    public boolean blockUser(String owner, String target){
+        String sql = "INSERT INTO blocked_users(owner_user_id, blocked_user_id) VALUES(?,?)";
+        try (Connection conn = pool.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, owner);
+            stmt.setString(2, target);
+            stmt.executeUpdate();
+            conn.commit();
+            logger.info("Successfully blocked a user");
+            return true;
+
+        } catch (SQLException e) {
+            logger.severe("deletePendingSubscription error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean unblockUser(String owner, String target){
+        //TODO:
+        return false;
+    }
+    public boolean unblockAll(String owner){
+        // TODO:
+        return false;
+    }
+    public List<String> getBlockList(String owner){
+        return Collections.emptyList();
+    }
+    public boolean isBlocked(String owner, String target){
+        logger.info("Checking if the owner has blocked the user");
+        String sql = "SELECT * FROM blocked_users WHERE owner_user_id = ? AND blocked_user_id = ?";
+        try(Connection conn = pool.getConnection()) {
+            PreparedStatement stmt = conn.prepareStatement(sql);
+            stmt.setString(1, owner);
+            stmt.setString(2, target);
+            ResultSet rs = stmt.executeQuery();
+            conn.commit();
+            return rs.next();
+        }catch (SQLException exception){
+            logger.info("Error isBlocked: "+exception.getLocalizedMessage());
+        }
+        return false;
+    }
 
     // =================================================================
     // Profile Changed Helpers
@@ -2132,8 +2114,6 @@ public final class DatabaseManager {
                                          String mimeType,
                                          long fileSizeBytes,
                                          String replyToId) {
-        logger.info("FROM JID IS: "+fromJid);
-        logger.info("TO JID IS: "+toJid);
         String sql = """
                 INSERT INTO offline_messages (
                     message_id,
@@ -2192,7 +2172,6 @@ public final class DatabaseManager {
         }
     }
 
-
     /**
      * Stores an encrypted offline message.
      * <p>
@@ -2204,41 +2183,27 @@ public final class DatabaseManager {
      * @param messageId        Client-generated UUID for this message
      * @param messageType      text | image | video | audio | file | location
      * @param encryptedContent Base64 AES-256-GCM ciphertext
-     * @param iv               Base64 12-byte IV
-     * @param mediaStorageKey  Object storage path (null for text messages)
      * @param mimeType         MIME type hint (null for text messages)
-     * @param fileSizeBytes    File size in bytes (0 for text messages)
      * @param replyToId        UUID of message being replied to (null if none)
      */
-    public boolean storeEncryptedMessageEventModel(String fromJid,
+    public boolean storeEncryptedMessage(String fromJid,
                                          String toJid,
                                          String messageId,
                                          String messageType,
                                          String encryptedContent,
-                                         String iv,
-                                         String mediaStorageKey,
-                                         String encryptedMetadata,
                                          String mimeType,
-                                         long fileSizeBytes,
                                          String replyToId) {
         String sql = """
-                INSERT INTO events (
-                    event_id,
-                    event_category,
-                    event_type,
-                    group_id,
-                    sender_id,
-                    recipient_id,
-                    sender_jid,
-                    group_version,
-                    epoch,
-                    iv,
+                INSERT INTO offline_messages (
+                    message_id,
+                    from_user_id,
+                    to_user_id,
+                    message_type,
                     encrypted_content,
-                    encrypted_metadata,
-                    reply_to_event_id,
-                    media_storage_key,
                     mime_type,
-                    file_size_bytes,
+                    reply_to_message_id,
+                    status,
+                    was_offline,
                     created_at,
                     expires_at
                 )
@@ -2263,14 +2228,10 @@ public final class DatabaseManager {
             stmt.setString(1, messageId);
             stmt.setString(2, messageType);
             stmt.setString(3, encryptedContent);
-            stmt.setString(4, iv);
-            stmt.setString(5, mediaStorageKey);
-            stmt.setString(6, encryptedMetadata);
-            stmt.setString(7, mimeType);
-            stmt.setLong(8, fileSizeBytes);
-            stmt.setString(9, replyToId);
-            stmt.setString(10, fromJid);
-            stmt.setString(11, toJid);
+            stmt.setString(4, mimeType);
+            stmt.setString(5, replyToId);
+            stmt.setString(6, fromJid);
+            stmt.setString(7, toJid);
 
             int rows = stmt.executeUpdate();
             conn.commit();
@@ -2281,6 +2242,7 @@ public final class DatabaseManager {
             return false;
         }
     }
+
     public boolean storeSystemEvent(
             String messageId,
             String groupId,
@@ -2485,33 +2447,6 @@ public final class DatabaseManager {
         }
     }
 
-
-    /**
-     * Marks a message as read.
-     * Called when the recipient opens the chat and reads the message.
-     */
-    public void markMessageRead(String messageId) {
-        logger.info("Marking message ad read");
-        String sql = """
-            UPDATE offline_messages
-            SET status  = 'read',
-                read_at = NOW()
-            WHERE message_id = ?
-              AND status IN ('pending', 'delivered')
-            """;
-
-        try (Connection conn = pool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-
-            stmt.setString(1, messageId);
-            stmt.executeUpdate();
-            conn.commit();
-
-        } catch (SQLException e) {
-            logger.warning("markMessageRead error: " + e.getMessage());
-        }
-    }
-
     // =========================================================================
     // Offline Receipts Methods
     // =========================================================================
@@ -2598,42 +2533,6 @@ public final class DatabaseManager {
     public List<GroupRepository.UnifiedTimelineItem> getUnifiedTimelineDelta(String userId, String clientLastSeenUlid, int limit) {
         List<GroupRepository.UnifiedTimelineItem> timeline = new ArrayList<>();
 
-        String sqlOld = """
-            SELECT
-                e.event_id,
-                e.event_category,
-                e.event_type,
-                e.group_id,
-                e.sender_id,
-                e.sender_jid,
-                e.group_version,
-                e.epoch,
-                e.iv,
-                e.encrypted_content,
-                e.encrypted_metadata,
-                e.reply_to_event_id,
-                e.media_storage_key,
-                e.mime_type,
-                e.file_size_bytes,
-                e.created_at
-            FROM events e
-            LEFT JOIN group_members m
-              ON e.group_id = m.group_id AND m.user_id = ?
-            WHERE
-                -- Branch A: Direct private messages intended for this specific client
-                (e.event_category = 'chat' AND e.recipient_id = ? AND e.event_id > ?)
-                OR
-                -- Branch B: Group messages and events bound by historical residency windows
-                (e.event_category IN ('groupchat', 'system')
-                 AND m.user_id IS NOT NULL
-                 AND e.event_id > ?
-                 AND e.sender_id != ?
-                 AND e.event_id >= m.joined_at
-                 AND (m.left_at IS NULL OR e.event_id <= m.left_at))
-            ORDER BY e.event_id ASC
-            LIMIT ?;
-            """;
-
         String sql = """
                 SELECT
                     e.event_id,
@@ -2676,14 +2575,6 @@ public final class DatabaseManager {
         try (Connection conn = pool.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
 
-            // Map the parameters cleanly to match the query indexes
-            //stmt.setString(1, userId);             // For the LEFT JOIN evaluation
-            //stmt.setString(2, userId);             // Branch A: recipient_id
-            //stmt.setString(3, clientLastSeenUlid); // Branch A: anchor
-            //stmt.setString(4, clientLastSeenUlid); // Branch B: anchor
-            //stmt.setString(5, userId); // Exclude the message that the current session sent
-            //stmt.setInt(6, limit);
-
             stmt.setString(1, userId);             // LEFT JOIN
             stmt.setString(2, userId);             // recipient_id
             stmt.setString(3, clientLastSeenUlid); // chat anchor
@@ -2720,217 +2611,6 @@ public final class DatabaseManager {
         );
     }
 
-    // =========================================================================
-    // Public Key Methods (for E2E encryption key exchange)
-    // =========================================================================
-
-    /**
-     * Stores a user's public identity key and signed pre-key.
-     * Called once after registration when the client generates its keys.
-     */
-    public boolean storeUserKeys(String userId,
-                                 String identityKey,
-                                 String signedPreKey,
-                                 int signedPreKeyId,
-                                 int keyVersion) {
-        String sql = """
-            INSERT INTO user_keys (
-                user_id,
-                identity_key,
-                signed_pre_key,
-                signed_pre_key_id,
-                key_version,
-                created_at,
-                updated_at
-            ) VALUES (?, ?, ?, ?, ?, NOW(), NOW())
-            ON CONFLICT (user_id, key_version)
-            DO UPDATE SET
-                identity_key      = EXCLUDED.identity_key,
-                signed_pre_key    = EXCLUDED.signed_pre_key,
-                signed_pre_key_id = EXCLUDED.signed_pre_key_id,
-                updated_at        = NOW()
-            """;
-
-        try (Connection conn = pool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-
-            stmt.setString(1, userId);
-            stmt.setString(2, identityKey);
-            stmt.setString(3, signedPreKey);
-            stmt.setInt(4, signedPreKeyId);
-            stmt.setInt(5, keyVersion);
-
-            stmt.executeUpdate();
-            conn.commit();
-            return true;
-
-        } catch (SQLException e) {
-            logger.severe("storeUserKeys error: " + e.getMessage());
-            return false;
-        }
-    }
-
-    /**
-     * Uploads a batch of one-time pre-keys for a user.
-     * Called by the client periodically to replenish the key supply.
-     * <p>
-     * One-time pre-keys are consumed one per new conversation.
-     * When supply runs low (< 10 remaining), the client uploads more.
-     */
-    public int storeOneTimePreKeys(String userId,
-                                   List<PreKey> preKeys) {
-        String sql = """
-            INSERT INTO one_time_pre_keys (
-                user_id, key_id, public_key, created_at
-            ) VALUES (?, ?, ?, NOW())
-            ON CONFLICT (user_id, key_id) DO NOTHING
-            """;
-
-        int stored = 0;
-
-        try (Connection conn = pool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-
-            for (PreKey key : preKeys) {
-                stmt.setString(1, userId);
-                stmt.setInt(2, key.keyId());
-                stmt.setString(3, key.publicKey());
-                stmt.addBatch();
-                stored++;
-            }
-
-            stmt.executeBatch();
-            conn.commit();
-
-            logger.info("Stored " + stored
-                    + " one-time pre-keys for userId=" + userId);
-
-        } catch (SQLException e) {
-            logger.severe("storeOneTimePreKeys error: " + e.getMessage());
-        }
-
-        return stored;
-    }
-
-    /**
-     * Fetches a user's public keys for initiating an encrypted session.
-     * <p>
-     * Returns:
-     *   - Identity key (long-term, always the same)
-     *   - Signed pre-key (rotated periodically)
-     *   - One one-time pre-key (claimed and deleted from supply)
-     * <p>
-     * The one-time pre-key provides forward secrecy:
-     * even if long-term keys are compromised later,
-     * past messages cannot be decrypted.
-     */
-    public UserPublicKeys fetchPublicKeysForUser(String targetUserId,
-                                                 String requestingUserId) {
-        // Get identity and signed pre-key
-        String keysSql = """
-            SELECT identity_key, signed_pre_key, signed_pre_key_id, key_version
-            FROM user_keys
-            WHERE user_id = ?
-            ORDER BY key_version DESC
-            LIMIT 1
-            """;
-
-        // Claim one one-time pre-key (atomically mark as claimed)
-        String otpkSql = """
-            UPDATE one_time_pre_keys
-            SET claimed_at         = NOW(),
-                claimed_by_user_id = ?
-            WHERE id = (
-                SELECT id FROM one_time_pre_keys
-                WHERE user_id    = ?
-                  AND claimed_at IS NULL
-                ORDER BY key_id ASC
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED
-            )
-            RETURNING key_id, public_key
-            """;
-
-        try (Connection conn = pool.getConnection()) {
-
-            String identityKey    = null;
-            String signedPreKey   = null;
-            int    signedPreKeyId = 0;
-
-            try (PreparedStatement stmt = conn.prepareStatement(keysSql)) {
-                stmt.setString(1, targetUserId);
-                try (ResultSet rs = stmt.executeQuery()) {
-                    if (rs.next()) {
-                        identityKey    = rs.getString("identity_key");
-                        signedPreKey   = rs.getString("signed_pre_key");
-                        signedPreKeyId = rs.getInt("signed_pre_key_id");
-                    }
-                }
-            }
-
-            if (identityKey == null) {
-                logger.warning("No keys found for userId=" + targetUserId);
-                return null;
-            }
-
-            // Claim a one-time pre-key
-            String otpkPublicKey = null;
-            int    otpkKeyId     = 0;
-
-            try (PreparedStatement stmt = conn.prepareStatement(otpkSql)) {
-                stmt.setString(1, requestingUserId);
-                stmt.setString(2, targetUserId);
-                try (ResultSet rs = stmt.executeQuery()) {
-                    if (rs.next()) {
-                        otpkKeyId     = rs.getInt("key_id");
-                        otpkPublicKey = rs.getString("public_key");
-                    }
-                }
-            }
-
-            conn.commit();
-
-            // Check remaining pre-key count
-            int remaining = countRemainingPreKeys(targetUserId);
-            if (remaining < 10) {
-                logger.warning("Low pre-key supply for userId="
-                        + targetUserId + " remaining=" + remaining);
-                // TODO: Send push notification to client to upload more keys
-            }
-
-            return new UserPublicKeys(
-                    targetUserId,
-                    identityKey,
-                    signedPreKey,
-                    signedPreKeyId,
-                    otpkPublicKey,
-                    otpkKeyId
-            );
-
-        } catch (SQLException e) {
-            logger.severe("fetchPublicKeysForUser error: " + e.getMessage());
-            return null;
-        }
-    }
-
-    private int countRemainingPreKeys(String userId) {
-        String sql = """
-            SELECT COUNT(*) FROM one_time_pre_keys
-            WHERE user_id = ? AND claimed_at IS NULL
-            """;
-
-        try (Connection conn = pool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-
-            stmt.setString(1, userId);
-            try (ResultSet rs = stmt.executeQuery()) {
-                return rs.next() ? rs.getInt(1) : 0;
-            }
-
-        } catch (SQLException e) {
-            return 0;
-        }
-    }
 
     // =========================================================================
     // Push Token Operations
@@ -2984,50 +2664,6 @@ public final class DatabaseManager {
         }
     }
 
-    /**
-     * Returns push targets for ALL devices of a user.
-     * Used when we want to notify every device (e.g. incoming call).
-     */
-    public List<PushTarget> getAllPushTargetsForUser(String userId) {
-        String sql = """
-            SELECT
-                st.push_token,
-                st.platform,
-                st.device_label,
-                u.display_name
-            FROM session_tokens st
-            INNER JOIN users u ON u.user_id = st.user_id
-            WHERE st.user_id    = ?
-              AND st.revoked_at IS NULL
-              AND st.push_token IS NOT NULL
-              AND u.active = true
-            ORDER BY st.last_used_at DESC
-            """;
-
-        List<PushTarget> targets = new ArrayList<>();
-
-        try (Connection conn = pool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-
-            stmt.setString(1, userId);
-            try (ResultSet rs = stmt.executeQuery()) {
-                while (rs.next()) {
-                    targets.add(new PushTarget(
-                            userId,
-                            rs.getString("push_token"),
-                            rs.getString("platform"),
-                            rs.getString("device_label"),
-                            rs.getString("display_name")
-                    ));
-                }
-            }
-
-        } catch (SQLException e) {
-            logger.severe("getAllPushTargetsForUser error: " + e.getMessage());
-        }
-
-        return targets;
-    }
 
     /**
      * Clears an invalid push token when FCM/APNs reports it as expired.
@@ -3166,19 +2802,5 @@ public final class DatabaseManager {
             long fileSizeBytes,       // File size hint (not sensitive)
             String replyToId,         // UUID of replied-to message (null)
             java.sql.Timestamp createdAt
-    ) {}
-
-    public record UserPublicKeys(
-            String userId,
-            String identityKey,      // Base64 EC public key
-            String signedPreKey,     // Base64 signed EC public key
-            int signedPreKeyId,
-            String oneTimePreKey,    // Base64 one-time EC public key (may be null)
-            int oneTimePreKeyId
-    ) {}
-
-    public record PreKey(
-            int keyId,
-            String publicKey         // Base64 encoded EC public key
     ) {}
 }

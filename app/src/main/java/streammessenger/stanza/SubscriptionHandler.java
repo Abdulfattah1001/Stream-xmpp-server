@@ -19,21 +19,21 @@ import java.util.logging.Logger;
 
 /**
  * Handles presence subscription stanzas (RFC 6121 §3):
- *
+ * <p>
  *   subscribe     → "I want to see your presence" (friend request)
  *   subscribed    → "OK, you can see my presence" (accepted)
  *   unsubscribe   → "Stop sending me your presence"
  *   unsubscribed  → "I'm revoking your access to my presence"
- *
+ * <p>
  * These are the mechanics behind "friend requests" in any IM system.
- *
+ * <p>
  * Subscription state machine per RFC 6121 §3.1:
- *
+ * <p>
  *   none + send subscribe    → none/ask=subscribe (pending out)
  *   none/ask + recv subscribed → to (they approved us)
  *   recv subscribe           → from (they want our presence)
  *   recv subscribe + send subscribed → from (we approved them)
- *
+ * <p>
  * Stateless singleton - safe to share across all connections.
  */
 public final class SubscriptionHandler implements StanzaHandler {
@@ -87,7 +87,7 @@ public final class SubscriptionHandler implements StanzaHandler {
 
     /**
      * Alice sends <presence type='subscribe' to='bob@domain'/>
-     *
+     * <p>
      * Actions:
      *  1. Add/update Alice's roster: bob → subscription=none, ask=subscribe
      *  2. If Bob is online: deliver <presence type='subscribe' from='alice'/>
@@ -139,9 +139,9 @@ public final class SubscriptionHandler implements StanzaHandler {
 
     /**
      * Bob sends <presence type='subscribed' to='alice@domain'/>
-     *
+     * <p>
      * Bob is approving Alice's subscription request.
-     *
+     * <p>
      * Actions:
      *  1. Update Bob's roster: alice → subscription=from (alice can see Bob's presence)
      *  2. Update Alice's roster: bob → subscription=to (alice sees Bob's presence)
@@ -214,9 +214,9 @@ public final class SubscriptionHandler implements StanzaHandler {
 
     /**
      * Alice sends <presence type='unsubscribe' to='bob@domain'/>
-     *
+     * <p>
      * Alice wants to stop receiving Bob's presence.
-     *
+     * <p>
      * Actions:
      *  1. Update Alice's roster: remove 'to' from subscription
      *  2. Notify Bob that Alice unsubscribed
@@ -256,10 +256,10 @@ public final class SubscriptionHandler implements StanzaHandler {
 
     /**
      * Bob sends <presence type='unsubscribed' to='alice@domain'/>
-     *
+     * <p>
      * Bob is revoking Alice's subscription to his presence.
      * Could be a rejection of a subscribe request, or removing an existing one.
-     *
+     * <p>
      * Actions:
      *  1. Update Bob's roster: remove 'from' direction
      *  2. Update Alice's roster: remove 'to' direction
@@ -310,7 +310,7 @@ public final class SubscriptionHandler implements StanzaHandler {
 
     /**
      * Computes the new subscription state after gaining a direction.
-     *
+     * <p>
      * Current → gaining → result:
      *   none  + from → from
      *   none  + to   → to
@@ -330,7 +330,7 @@ public final class SubscriptionHandler implements StanzaHandler {
 
     /**
      * Removes a direction from a subscription state.
-     *
+     * <p>
      * both - from → to
      * both - to   → from
      * from - from → none

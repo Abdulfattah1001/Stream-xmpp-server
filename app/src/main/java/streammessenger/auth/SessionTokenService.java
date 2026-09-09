@@ -69,13 +69,10 @@ public final class SessionTokenService {
      *   - User account is disabled
      */
     public ValidatedToken validate(String rawToken) {
-        logger.info("Raw token provided by the user is: "+rawToken);
         if (rawToken == null || rawToken.isBlank()) return null;
 
         String tokenHash = DatabaseManager.hashToken(rawToken.trim());
-        DatabaseManager.SessionTokenRecord record =
-                db.getSessionToken(tokenHash);
-        logger.info("Original token is: "+tokenHash);
+        DatabaseManager.SessionTokenRecord record = db.getSessionToken(tokenHash);
 
         if (record == null) {
             logger.fine("Token not found");

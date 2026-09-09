@@ -1,6 +1,5 @@
 package streammessenger;
 
-
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.net.ServerSocket;
@@ -32,24 +31,19 @@ import streammessenger.group.handler.GroupStanzaHandler;
 import streammessenger.group.repository.GroupRepository;
 import streammessenger.group.service.GroupEventNotifier;
 import streammessenger.group.service.GroupMessageRouter;
+import streammessenger.group.service.GroupService;
 import streammessenger.group.service.GroupSyncService;
 import streammessenger.metrics.ServerMetrics;
-import streammessenger.muc.service.FanoutService;
-import streammessenger.muc.service.GroupRegistry;
-import streammessenger.muc.service.GroupService;
-import streammessenger.muc.service.InvitationService;
-import streammessenger.muc.service.MembershipService;
-import streammessenger.muc.service.PresenceBroadcaster;
 import streammessenger.mutlidevice.CarbonManager;
 import streammessenger.mutlidevice.DeviceManager;
 import streammessenger.mutlidevice.MultiDeviceMessageHandler;
 import streammessenger.push.PushNotificationService;
+import streammessenger.roster.PrivacyEngine;
 import streammessenger.roster.RosterManager;
 import streammessenger.security.RateLimiter;
 import streammessenger.session.Session;
 import streammessenger.session.SessionReaper;
 import streammessenger.session.SessionRegistry;
-import streammessenger.signal.SenderKeyManager;
 import streammessenger.stanza.CarbonHandler;
 import streammessenger.stanza.MessageHandler;
 import streammessenger.stanza.ReactionHandler;
@@ -58,7 +52,6 @@ import streammessenger.stanza.VerifiedAccountHandler;
 import streammessenger.stream.XMPPStreamProcessor;
 import streammessenger.vhost.DomainConfig;
 import streammessenger.vhost.VirtualHostManager;
-
 
 /**
  * XMPP Server - root component.
@@ -81,6 +74,7 @@ import streammessenger.vhost.VirtualHostManager;
  *   ├── SessionReaper         (idle session cleanup)
  *   └── ServerMetrics         (counters + gauges)
  */
+@SuppressWarnings("ALL")
 public class Server {
 
     private static final Logger logger =
@@ -149,10 +143,9 @@ public class Server {
     //private final GroupService groupService;
     //private final MembershipService membershipService;
     //private final InvitationService invitationService;
-    private final FanoutService fanoutService;
-    private final PresenceBroadcaster presenceBroadcaster;
     private final GroupStanzaHandler groupStanzaHandler;
     //private final SenderKeyManager senderKeyManager;
+    private final PrivacyEngine privacyEngine;
 
 
     // -------------------------------------------------------------------------
@@ -220,25 +213,14 @@ public class Server {
 
         this.groupRepository      = new GroupRepository(connectionPool,
                 "conference." + config.getDomainName());
-        this.fanoutService        = new FanoutService(registry, db);
-        this.presenceBroadcaster  = new PresenceBroadcaster(registry, db);
-        /*this.groupRegistry        = new GroupRegistry(groupRepository);
-        this.groupService         = new GroupService(groupRepository,
-                groupRegistry, presenceBroadcaster, fanoutService);
-        this.senderKeyManager =  new SenderKeyManager(connectionPool, registry, groupRegistry);
-        this.membershipService    = new MembershipService(groupRepository,
-                groupRegistry, fanoutService, presenceBroadcaster, this.senderKeyManager);
-        this.invitationService    = new InvitationService(connectionPool,
-                groupRepository, groupRegistry, membershipService, registry,
-                "https://" + config.getDomainName() + "/g");
-        this.groupStanzaHandler   = new GroupStanzaHandler(groupRepository,
-                groupRegistry, groupService, membershipService, invitationService,
-                fanoutService, presenceBroadcaster,
-                db,
-                "conference." + config.getDomainName());*/
+
+        this.rosterManager = new RosterManager(db, registry);
+
+        this.privacyEngine = new PrivacyEngine(db, rosterManager);
+
         GroupEventNotifier notifier = new GroupEventNotifier(groupRepository, registry);
         this.groupStanzaHandler = new GroupStanzaHandler(groupRepository,
-                new streammessenger.group.service.GroupService(groupRepository, notifier),
+                new GroupService(groupRepository, notifier),
                 new GroupMessageRouter(groupRepository, registry, db), new GroupSyncService(groupRepository, notifier),
                 registry,
                 "conference."+config.getDomainName());
@@ -250,7 +232,6 @@ public class Server {
         }
 
         this.vhostManager  = new VirtualHostManager(registry);
-        this.rosterManager = new RosterManager(db, registry);
         this.authManager   = new AuthManager(db, registry, metrics, sessionTokenService, this.firebaseTokenVerifier);
         this.tlsUpgrader   = new TLSUpgrader(config);
 
@@ -526,8 +507,6 @@ public class Server {
         sessionReaper.stop();
 
         maintenanceExecutor.shutdown();
-
-        fanoutService.shutdown();
 
         jobPool.shutdown();
         try {

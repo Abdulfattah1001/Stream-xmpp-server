@@ -1,15 +1,18 @@
 package streammessenger.stanza;
 
 
+import java.sql.Connection;
 import java.util.UUID;
 import java.util.logging.Logger;
 
 import javax.xml.stream.XMLEventReader;
 import javax.xml.stream.events.StartElement;
 
+import streammessenger.db.ConnectionPool;
 import streammessenger.db.DatabaseManager;
 import streammessenger.mutlidevice.DeviceManager;
 import streammessenger.session.Session;
+import streammessenger.session.SessionRegistry;
 
 
 import javax.xml.namespace.QName;
@@ -55,9 +58,13 @@ public final class ResourceBindHandler implements StanzaHandler {
     private static final SecureRandom secureRandom = new SecureRandom();
 
     private final DatabaseManager db;
+    private final SessionRegistry registry;
+    private final ConnectionPool pool;
 
-    public ResourceBindHandler(DatabaseManager db) {
+    public ResourceBindHandler(DatabaseManager db, SessionRegistry registry, ConnectionPool pool) {
         this.db = db;
+        this.registry = registry;
+        this.pool = pool;
     }
 
     @Override
@@ -93,7 +100,8 @@ public final class ResourceBindHandler implements StanzaHandler {
 
         // Bind the resource to the session
         session.setResource(resource);
-        //TODO: registerDevice(session, resource, DeviceManager);
+        // The Device registration logic has been moved to the Account creation or returning user state
+        //registerDevice(session, resource, new DeviceManager(pool, registry));
         String fullJid = session.getJid();
 
         // Confirm the binding
@@ -109,9 +117,10 @@ public final class ResourceBindHandler implements StanzaHandler {
 
         logger.info("Resource bound: " + fullJid + " uid=" + session.getSessionId());
 
+        // TODO: This is where the sendings of pending items should begin, so a queue should be employed so as to deliver the message to the current user
         // Session is now fully operational
         // Deliver anything that was waiting for this user
-        //deliverPendingItems(session);
+        // deliverPendingItems(session);
     }
 
     // Register this device in the device registry

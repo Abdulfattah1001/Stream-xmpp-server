@@ -6,7 +6,6 @@ import java.util.concurrent.*;
 import java.util.logging.Logger;
 
 import streammessenger.db.ConnectionPool;
-import streammessenger.muc.service.GroupRegistry;
 import streammessenger.session.Session;
 import streammessenger.session.SessionRegistry;
 
@@ -55,7 +54,6 @@ public final class SenderKeyManager {
 
     private final ConnectionPool pool;
     private final SessionRegistry sessionRegistry;
-    private final GroupRegistry groupRegistry;
 
     private final ExecutorService executor = new ThreadPoolExecutor(
             4, 20, 60L, TimeUnit.SECONDS,
@@ -64,11 +62,9 @@ public final class SenderKeyManager {
     );
 
     public SenderKeyManager(ConnectionPool pool,
-                             SessionRegistry sessionRegistry,
-                             GroupRegistry groupRegistry) {
+                             SessionRegistry sessionRegistry) {
         this.pool             = pool;
         this.sessionRegistry  = sessionRegistry;
-        this.groupRegistry    = groupRegistry;
     }
 
     // =========================================================================

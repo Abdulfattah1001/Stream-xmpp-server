@@ -1,0 +1,17 @@
+package streammessenger.group.model;
+
+public enum GroupEventType {
+    MEMBER_JOINED_VIA_LINK,
+    MEMBER_ADDED,
+    MEMBER_LEFT,
+    MEMBER_REMOVED,
+
+    MEMBER_PROMOTED,
+    MEMBER_DEMOTED,
+
+    GROUP_CREATED,
+
+    SUBJECT_CHANGED,
+    DESCRIPTION_CHANGED,
+    AVATAR_CHANGED
+}

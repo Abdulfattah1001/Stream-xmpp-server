@@ -68,6 +68,7 @@ public final class XMPPStreamProcessor {
 
     // MUC routing
     private final String mucDomain;          // "conference.omnyrex.com"
+
     private volatile GroupStanzaHandler groupHandler;
     // Stanza handlers - stateless singletons, keyed by element local name
     private final Map<String, StanzaHandler> handlers;
@@ -99,7 +100,7 @@ public final class XMPPStreamProcessor {
         this.carbonHandler = carbonHandler;
         this.multiDeviceHandler = multiDeviceMessageHandler;
 
-        this.mucDomain = "conference"+"@omnyrex.com";
+        this.mucDomain = "conference"+config.getDomainName();
 
         // Build handler registry - one instance per handler, shared across all connections
         this.handlers = new HashMap<>();
@@ -107,7 +108,7 @@ public final class XMPPStreamProcessor {
         //TODO: Not encrypted message:this.handlers.put("message",  new MessageHandler(registry, db, metrics));
         this.handlers.put("message", new EncryptedMessageHandler(registry, db, metrics, reactionHandler, crdtNoteHandler));
         this.handlers.put("presence", new PresenceHandler(registry, db));
-        this.handlers.put("iq",       new IQHandler(db, registry, rosterManager, callHandler, collaborativeNoteHandler, crdtNoteHandler, config));
+        this.handlers.put("iq",       new IQHandler(db, registry, rosterManager, callHandler, collaborativeNoteHandler, crdtNoteHandler, config, pool));
         this.handlers.put("status-iq",new StatusHandler(db, registry));
         this.handlers.put("call",     callHandler);
         this.handlers.put("note",     collaborativeNoteHandler);
@@ -482,10 +483,7 @@ public final class XMPPStreamProcessor {
      *   2. Then offline stored messages are delivered
      */
     private void deliverOfflineMessagesAfterResume(Session session) {
-        logger.info("Message Delivery after resumption");
         if (session.getContactId() == null) return;
-        logger.info("Tested for nullability");
-
         Thread.ofVirtual()
                 .name("offline-delivery-" + session.getSessionId())
                 .start(() -> {

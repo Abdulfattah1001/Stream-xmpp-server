@@ -24,20 +24,19 @@ import java.util.stream.Collectors;
  */
 public final class SessionRegistry {
 
-    /**
-     * For the context, contactId -> u_1kufh2; uid -> 32bits number e.t.c
-     */
-
     private static final Logger logger = Logger.getLogger(SessionRegistry.class.getName());
 
-    // uid → Session (primary index)
-    // TODO: To be renamed to bySessionId
-    private final ConcurrentHashMap<String, Session> bySessionId =
-            new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Session> bySessionId = new ConcurrentHashMap<>();
 
     // userId → Set of sessionIds (secondary index, supports multiple resources)
     private final ConcurrentHashMap<String, Set<String>> contactIdsToSessionIds =
             new ConcurrentHashMap<>();
+
+    private final ConcurrentHashMap<String, Set<String>> userIdsToSessionIds = new ConcurrentHashMap<>();
+
+    private final ConcurrentHashMap<String, Set<Session>> byUserIds = new ConcurrentHashMap<>();
+
+    private final ConcurrentHashMap<String, Set<Session>> interest = new ConcurrentHashMap<>();
 
     private static final SessionRegistry INSTANCE = new SessionRegistry();
 
@@ -59,6 +58,7 @@ public final class SessionRegistry {
         bySessionId.put(session.getSessionId(), session);
     }
 
+
     /**
      * Binds a userId to a session after successful authentication.
      * <p>
@@ -76,9 +76,51 @@ public final class SessionRegistry {
             sessionIds.add(session.getSessionId());
             return sessionIds;
         });
+
+        String userId = session.getUid();
+        if (userId != null) {
+            userIdsToSessionIds.compute(userId, (k, existingUids) -> {
+                Set<String> sessionIds = existingUids != null ? existingUids : ConcurrentHashMap.newKeySet();
+                sessionIds.add(session.getSessionId());
+                return sessionIds;
+            });
+
+            byUserIds.compute(userId, (k, set) -> {if(set == null)  set = ConcurrentHashMap.newKeySet();set.add(session);return set; });
+
+            // Add interests [Those who are interested in the current session updating his profile]
+
+        }
+
         logger.info("Session bound: contactId=" + contactId
                 + " sessionId=" + session.getSessionId()
                 + " totalResourcesForContact=" + contactIdsToSessionIds.get(contactId).size());
+    }
+
+    private void register(Session session, Set<String> contacts) {
+        if(contacts.size() < 20_000) {
+            Set<String> snapshot = Set.copyOf(contacts);
+            for(String s : snapshot) {
+                interest.compute(s, (k, set) -> {
+                    if(set == null) {  set = ConcurrentHashMap.newKeySet(); }
+                    set.add(session);
+                    return set;
+                });
+            }
+        }
+    }
+
+    /**
+     * Gets the Set of Session of users who are interested
+     * in the userId activities [PROFILE CHANGE, STATUS UPDATES, BLOG UPDATES E.T.C]
+     * @param userId The ID of the user in question
+     * @return The Set of those online sessions who are interested
+     */
+    public Set<Session> interestedIn(String userId) {
+        return interest.getOrDefault(userId, Set.of());
+    }
+
+    public Set<Session> sessionsOf(String userId) {
+        return byUserIds.getOrDefault(userId, Set.of());
     }
 
     // =========================================================================
@@ -157,12 +199,48 @@ public final class SessionRegistry {
                 .collect(Collectors.toList());
     }
 
+
+    public List<Session> getSessionsByUserId(String userId) {
+        Set<String> sessionIds = userIdsToSessionIds.get(userId);
+        if (sessionIds == null || sessionIds.isEmpty()) return Collections.emptyList();
+
+        return sessionIds.stream()
+                .map(bySessionId::get)
+                .filter(Objects::nonNull)
+                .filter(Session::isAuthenticated)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Returns ONE active session matching the given userId (uid).
+     * Picks the most recently active session if user has multiple active connections.
+     */
+    public Optional<Session> getByUserId(String userId) {
+        if (userId == null || userId.isBlank()) return Optional.empty();
+
+        return bySessionId.values().stream()
+                .filter(Session::isAuthenticated)
+                .filter(session -> userId.equalsIgnoreCase(session.getUid()))
+                .max(Comparator.comparingLong(Session::getLastActivity));
+    }
+
+    /**
+     * Returns ALL active sessions for a given userId (uid).
+     */
+    /*public List<Session> getSessionsByUserId(String userId) {
+        if (userId == null || userId.isBlank()) return Collections.emptyList();
+
+        return bySessionId.values().stream()
+                .filter(Session::isAuthenticated)
+                .filter(session -> userId.equalsIgnoreCase(session.getUid()))
+                .collect(Collectors.toList());
+    }*/
+
     /**
      * Returns the specific session for a full JID (user@domain/resource).
      * Used when routing to a specific resource.
      */
     public Optional<Session> getByFullJid(String fullJid) {
-        // fullJid = "alice@domain.com/mobile"
         if (!fullJid.contains("/")) {
             return getByContactId(fullJid); // bare JID fallback
         }
@@ -201,4 +279,5 @@ public final class SessionRegistry {
     public ConcurrentHashMap<String, Session> getRawMap() {
         return bySessionId;
     }
+
 }

@@ -5,14 +5,14 @@ import java.util.List;
 
 /**
  * Represents one entry in a user's contact list (roster).
- *
+ * <p>
  * subscription values (RFC 6121 §2.1):
  *   none    → No subscription in either direction
  *   from    → Contact receives OUR presence (they subscribed to us)
  *   to      → WE receive their presence (we subscribed to them)
  *   both    → Bidirectional subscription
  *   remove  → Special: signals this item should be deleted
- *
+ * <p>
  * ask field:
  *   "subscribe" → We have sent a subscription request, awaiting approval
  *   null        → No pending outbound request

@@ -1,5 +1,8 @@
 package streammessenger.stanza;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 import java.util.logging.Logger;
 
 import javax.xml.namespace.QName;
@@ -12,7 +15,7 @@ import streammessenger.db.DatabaseManager;
 import streammessenger.session.Session;
 import streammessenger.session.SessionRegistry;
 
-public class PrivacyHandler implements StanzaHandler{
+public class PrivacyHandler implements StanzaHandler {
 
     private static final Logger logger = Logger.getLogger(PrivacyHandler.class.getName());
     private static final String PRIVACY_NS = "urn:xmpp:custom:privacy:0";
@@ -79,14 +82,16 @@ public class PrivacyHandler implements StanzaHandler{
 
     private void handleSet(Session session, String iqId, String userJid, XMLEventReader reader)
             throws XMLStreamException {
+        logger.info("Setting privacy for the user");
 
         // Load current (so we only update fields the client sent)
-        Privacy current = db.getPrivacy(userJid).orElse(Privacy.defaults());
+        Privacy current = Objects.requireNonNull(db.getPrivacy(userJid)).orElse(Privacy.defaults());
 
         String lastSeen     = current.lastSeenVisibility();
         String profilePhoto = current.photoVisibility();
         String about        = current.aboutVisibility();
         boolean readReceipts = current.readReceiptsEnabled();
+        List<PrivacyException> newExceptions = null;
 
         // Parse children of <query>
         int depth = 1;
@@ -96,7 +101,13 @@ public class PrivacyHandler implements StanzaHandler{
             if (event.isStartElement()) {
                 String name = event.asStartElement().getName().getLocalPart();
                 String value = readText(reader); // consumes content + end tag
+                logger.info("The privacy name is: "+name);
 
+                if("exceptions".equals(name)) {
+                    logger.info("Updating user selected exceptions");
+                    newExceptions = parseExceptions(reader);
+                    continue;
+                }
                 switch (name) {
                     case "last_seen"     -> lastSeen = validateVisibility(value);
                     case "profile_photo" -> profilePhoto = validateVisibility(value);
@@ -112,6 +123,10 @@ public class PrivacyHandler implements StanzaHandler{
         // Persist
         boolean store = db.upsertPrivacy(userJid, new Privacy(lastSeen, profilePhoto, about, readReceipts));
 
+        if(newExceptions != null) {
+            logger.info("Updating the privacy_exceptions table...");
+        }
+
         // ALWAYS respond to set
         session.writeXML(String.format(
                 "<iq type='result' id='%s' to='%s'/>",
@@ -121,6 +136,44 @@ public class PrivacyHandler implements StanzaHandler{
         //TODO: pushToOtherResources(userJid, session);
     }
 
+    /** Consumes <exceptions>...</exceptions>, generically tracking nesting depth. */
+    private List<PrivacyException> parseExceptions(XMLEventReader reader) throws XMLStreamException {
+        List<PrivacyException> list = new ArrayList<>();
+        int depth = 1;
+        while (reader.hasNext() && depth > 0) {
+            XMLEvent event = reader.nextEvent();
+            if (event.isStartElement()) {
+                depth++;
+                StartElement se = event.asStartElement();
+                if (se.getName().getLocalPart().equals("except")) {
+                    String field = getAttr(se, "field");
+                    String type  = getAttr(se, "type");
+                    String jid   = getAttr(se, "jid");
+                    if (field != null && type != null && jid != null) {
+                        try {
+                            list.add(new PrivacyException(
+                                    validatePrivacyField(field),
+                                    PrivacyException.ExceptionType.valueOf(type.toUpperCase()),
+                                    jid));
+                        } catch (IllegalArgumentException ex) {
+                            logger.warning("Ignoring invalid exception entry: " + ex.getMessage());
+                        }
+                    }
+                }
+            } else if (event.isEndElement()) {
+                depth--;
+            }
+        }
+        return list;
+    }
+
+
+    private String validatePrivacyField(String f) {
+        return switch (f) {
+            case "last_seen", "profile_photo", "about" -> f;
+            default -> throw new IllegalArgumentException("Invalid field: " + f);
+        };
+    }
     private String validateVisibility(String v) {
         return switch (v) {
             case "everyone", "contacts", "nobody" -> v;
@@ -204,6 +257,10 @@ public class PrivacyHandler implements StanzaHandler{
             }
         } catch (XMLStreamException ignored) {}
         return sb.toString().trim();
+    }
+
+    public record PrivacyException(String field, ExceptionType type, String jid) {
+        public enum ExceptionType { ALLOW, DENY }
     }
 
     public record Privacy(

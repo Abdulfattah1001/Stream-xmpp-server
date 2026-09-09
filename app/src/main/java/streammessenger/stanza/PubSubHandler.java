@@ -16,7 +16,6 @@ import streammessenger.db.DatabaseManager;
 import streammessenger.session.Session;
 import streammessenger.session.SessionRegistry;
 
-
 public class PubSubHandler implements StanzaHandler{
     private static final Logger logger = Logger.getLogger(PubSubHandler.class.getName());
     private final DatabaseManager db;

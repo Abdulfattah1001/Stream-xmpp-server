@@ -51,7 +51,7 @@ public final class PresenceHandler implements StanzaHandler {
 
         String presenceXml = buildPresenceStanza(session.getJid(), type, show);
 
-        // Broadcast to all authenticated sessions (excluding sender)
+        // Broadcast to all authenticated sessions (excluding sender) that is  on the current user rosters
         int broadcast = 0;
         for (Session other : registry.getAllSessions()) {
             if (!other.getSessionId().equals(session.getSessionId()) && other.isAuthenticated()) {

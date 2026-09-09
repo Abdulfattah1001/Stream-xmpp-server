@@ -6,7 +6,7 @@ import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.Executors;
+import java.util.Set;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -98,6 +98,9 @@ public class Session {
     private volatile String deviceId;
     private final ScheduledExecutorService scheduler;
     private ScheduledFuture<?> ackTaskHandle;
+
+    private volatile boolean indexed = true;
+    private volatile Set<String> indexedContacts = Set.of();
 
 
     // -------------------------------------------------------------------------
@@ -283,6 +286,12 @@ public class Session {
         );
     }
 
+    public void setIndexedContacts(Set<String> ids) {
+        this.indexed = true;
+        this.indexedContacts = ids;
+    }
+
+    public boolean isIndexed() { return indexed; }
     private void checkAckRequirement() {
         long current = System.currentTimeMillis();
         // Only send <r/> if they've been idle AND we actually have stanzas to ack

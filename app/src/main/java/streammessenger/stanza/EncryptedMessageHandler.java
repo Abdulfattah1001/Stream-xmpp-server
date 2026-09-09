@@ -133,25 +133,17 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         // Update the last seen status of the sender
         session.touchActivity();
 
-
-        // Route based on content type
         if (parsed.isReceiptOnly()) {
-            // Delivery/read receipt - route directly
             routeReceipt(parsed, session, toContactId);
             return;
         }
 
-
-
         if (parsed.isChatStateOnly()) {
-            // Typing indicator - route directly, never store
             routeChatState(parsed, session, toContactId, type);
             return;
         }
 
         if (parsed.encryptedContent() == null && parsed.mediaUrl == null) {
-            // No encrypted content and not a receipt/chat state
-            // Reject - we require E2E encryption
             sendNotAcceptableError(session, id);
             consumeElement(reader);
             return;
@@ -175,6 +167,7 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                                      String toContactId,
                                      String type,
                                      String messageId) {
+        logger.info("The sender of the message is: "+sender.getUid() + " and the receiver is: "+toContactId);
         // Check the message keys
         String identityKey = parsed.identityKey();
         Optional<String> key = db.getIdentityKey(toContactId);
@@ -184,19 +177,23 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         }
         // Build the full stanza XML to forward/store
         String stanzaXml = buildEncryptedStanza(
-                messageId, sender.getUid()/* sender.getContactId() */, toContactId,
+                messageId, sender.getUid(), toContactId,
                 type, parsed
         );
 
         boolean delivered = false;
 
         // Try online delivery first
-        java.util.Optional<Session> recipientSession = registry.getByContactId(toContactId);
+        //java.util.Optional<Session> recipientSession = registry.getByContactId(toContactId);
+        Optional<Session> recipientSession = registry.getByUserId(toContactId);
 
         if (recipientSession.isPresent() && recipientSession.get().isAuthenticated()) {
+            logger.info("The receiver is online, routing the message ...");
             delivered = recipientSession.get().writeXML(stanzaXml);
             if(delivered) logger.info("Message sent"); else logger.info("Message not sent");
-        } else {}
+        } else {
+            logger.info("The receiver is offline");
+        }
 
         if (delivered) {
             metrics.messageSent();
@@ -209,11 +206,7 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                         messageId,
                         parsed.msgType() != null ? parsed.msgType() : "text",
                         parsed.encryptedContent(),
-                        parsed.iv(),
-                        parsed.mediaStorageKey(),
-                        parsed.encryptedMetadata(),
                         parsed.mimeType(),
-                        parsed.fileSizeBytes(),
                         parsed.replyToId()
                 );
 
@@ -228,9 +221,7 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                 return;
             }
         }
-
         // Always send server-level receipt to sender
-        // (confirms the server received it, not that recipient did)
         sendServerReceipt(sender, messageId);
     }
 
@@ -263,16 +254,8 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                 if(!sent){
                     db.storeReceipt(sender.getUid(), toContactId, parsed.receiptId, parsed.receiptType);
                 }
-
-                /*if ("displayed".equals(parsed.receiptType())) {
-                    db.markMessageRead(parsed.receiptId());
-                } else {
-                    db.markMessageDelivered(parsed.receiptId());
-                }*/
             }
         }, () -> {
-            // user offline
-
             db.storeReceipt(
                     sender.getContactId(),
                     toContactId,
@@ -332,47 +315,19 @@ public final class EncryptedMessageHandler implements StanzaHandler {
 
         // Encrypted payload
         sb.append(String.format(
-                "<encrypted xmlns='%s' msg_type='%s' iv='%s'",
+                "<encrypted xmlns='%s' msg_type='%s' ",
                 E2EE_NS,
-                escapeXml(parsed.msgType()),
-                escapeXml(parsed.iv())
+                escapeXml(parsed.msgType())
         ));
 
-        // Media attributes (not sensitive - hints for UI)
-        if (parsed.mediaStorageKey() != null) {
-            sb.append(String.format(
-                    " storage_key='%s'",
-                    escapeXml(parsed.mediaStorageKey())
-            ));
-        }
-        if(parsed.mediaUrl() != null){
-            sb.append(String.format(
-                    " media_url='%s'",
-                    escapeXml(parsed.mediaUrl())
-            ));
-        }
         if (parsed.mimeType() != null) {
             sb.append(String.format(
                     " mime='%s'", escapeXml(parsed.mimeType())));
-        }
-        if (parsed.fileSizeBytes() > 0) {
-            sb.append(String.format(
-                    " size='%d'", parsed.fileSizeBytes()));
         }
 
         sb.append(">");
         sb.append(parsed.encryptedContent());
         sb.append("</encrypted>");
-
-        // Encrypted metadata (dimensions, duration, thumbnail key)
-        if (parsed.encryptedMetadata() != null) {
-            sb.append(String.format(
-                    "<meta xmlns='%s' iv='%s'>%s</meta>",
-                    E2EE_NS,
-                    escapeXml(parsed.metaIv()),
-                    escapeXml(parsed.encryptedMetadata())
-            ));
-        }
 
         // Reply reference
         if (parsed.replyToId() != null) {
@@ -487,9 +442,9 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         }
 
         return new ParsedMessage(
-                encryptedContent, iv, msgType,
-                mediaStorageKey, identityKey, mediaUrl,encryptedMetadata, metaIv,
-                mimeType, fileSizeBytes, replyToId,
+                encryptedContent,  msgType,
+                identityKey, mediaUrl,
+                mimeType, replyToId,
                 receiptType, receiptId, chatState
         );
     }
@@ -603,15 +558,10 @@ public final class EncryptedMessageHandler implements StanzaHandler {
 
     private record ParsedMessage(
             String encryptedContent,
-            String iv,
             String msgType,
-            String mediaStorageKey,
             String identityKey,
             String mediaUrl,
-            String encryptedMetadata,
-            String metaIv,
             String mimeType,
-            long fileSizeBytes,
             String replyToId,
             String receiptType,
             String receiptId,

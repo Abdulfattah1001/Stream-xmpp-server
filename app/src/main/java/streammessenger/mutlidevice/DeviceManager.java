@@ -96,7 +96,7 @@ public final class DeviceManager {
     /**
      * Registers a device for a user.
      * Called during XMPP resource binding.
-     *
+     * <p>
      * If the device was previously registered (same device_id from client),
      * updates its last_seen_at and push token.
      *

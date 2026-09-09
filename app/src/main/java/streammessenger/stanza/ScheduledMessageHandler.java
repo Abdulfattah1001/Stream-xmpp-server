@@ -24,26 +24,26 @@ import streammessenger.session.SessionRegistry;
 
 /**
  * Handles scheduled message operations.
- *
+ * <p>
  * Custom namespace: urn:xmpp:schedule:0
- *
+ * <p>
  * WHAT IT DOES:
  * ─────────────
  * User sends: "Send this message to Alice at 09:00 tomorrow"
- *
+ * <p>
  * Server stores the encrypted message with a scheduled_for timestamp.
  * Background scheduler fires at that time, routes the message as if
  * the user just sent it.
- *
+ * <p>
  * The message content is encrypted by the client before scheduling.
  * Server stores and delivers ciphertext only.
- *
+ * <p>
  * OPERATIONS:
  * ───────────
  *   schedule → Store a message for later delivery
  *   cancel   → Cancel a pending scheduled message
  *   list     → List all pending scheduled messages
- *
+ * <p>
  * Example - Schedule:
  *   <iq type='set' id='sc1'>
  *     <schedule xmlns='urn:xmpp:schedule:0' action='schedule'>
@@ -52,7 +52,7 @@ import streammessenger.session.SessionRegistry;
  *       <encrypted iv='BASE64_IV' msg_type='text'>BASE64_CIPHERTEXT</encrypted>
  *     </schedule>
  *   </iq>
- *
+ * <p>
  * Example - Cancel:
  *   <iq type='set' id='sc2'>
  *     <schedule xmlns='urn:xmpp:schedule:0' action='cancel'>

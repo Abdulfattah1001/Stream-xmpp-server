@@ -1,11 +1,9 @@
 package streammessenger.group.repository;
 
-import com.github.f4b6a3.ulid.UlidCreator;
 
 import streammessenger.db.ConnectionPool;
 import streammessenger.group.handler.GroupStanzaHandler;
 import streammessenger.group.model.*;
-import streammessenger.muc.model.GroupEventType;
 
 import java.security.SecureRandom;
 import java.sql.*;
@@ -152,248 +150,6 @@ public final class GroupRepository {
 
 
     /**
-     * Stores an encrypted offline message.
-     * <p>
-     * The server stores CIPHERTEXT only.
-     * It never sees the plaintext content.
-     *
-     * @param fromJid          Sender's full JID
-     * @param toJid            Recipient's bare JID
-     * @param messageId        Client-generated UUID for this message
-     * @param messageType      text | image | video | audio | file | location
-     * @param encryptedContent Base64 AES-256-GCM ciphertext
-     * @param iv               Base64 12-byte IV
-     * @param mediaStorageKey  Object storage path (null for text messages)
-     * @param mimeType         MIME type hint (null for text messages)
-     * @param fileSizeBytes    File size in bytes (0 for text messages)
-     * @param replyToId        UUID of message being replied to (null if none)
-     */
-    @Deprecated
-    private boolean storeEncryptedMessageEventModelOld(String fromJid,
-                                                   String toJid,
-                                                   String messageId,
-                                                   String messageType,
-                                                   String encryptedContent,
-                                                   String iv,
-                                                   String mediaStorageKey,
-                                                   String encryptedMetadata,
-                                                   String mimeType,
-                                                   long fileSizeBytes,
-                                                   String replyToId) {
-        String eventId = UlidCreator.getMonotonicUlid().toString().toUpperCase();
-        String sql = """
-                INSERT INTO events (
-                    event_id,
-                    event_category,
-                    event_type,
-                    group_id,
-                    sender_id,
-                    recipient_id,
-                    sender_jid,
-                    group_version,
-                    epoch,
-                    iv,
-                    encrypted_content,
-                    encrypted_metadata,
-                    reply_to_event_id,
-                    media_storage_key,
-                    mime_type,
-                    file_size_bytes,
-                    created_at,
-                    expires_at
-                )
-                SELECT
-                    ?,
-                    f.user_id,
-                    t.user_id,
-                    ?, ?, ?, ?, ?, ?, ?, ?,
-                    'pending',
-                    true,
-                    NOW(),
-                    NOW() + INTERVAL 30 DAY
-                FROM users f
-                JOIN users t
-                WHERE f.user_id = ?
-                  AND t.user_id = ?
-                """;
-
-        try (Connection conn = pool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-
-            stmt.setString(1, messageId);
-            stmt.setString(2, messageType);
-            stmt.setString(3, encryptedContent);
-            stmt.setString(4, iv);
-            stmt.setString(5, mediaStorageKey);
-            stmt.setString(6, encryptedMetadata);
-            stmt.setString(7, mimeType);
-            stmt.setLong(8, fileSizeBytes);
-            stmt.setString(9, replyToId);
-            stmt.setString(10, fromJid);
-            stmt.setString(11, toJid);
-
-            int rows = stmt.executeUpdate();
-            conn.commit();
-            return rows > 0;
-
-        } catch (SQLException e) {
-            logger.severe("storeEncryptedMessage error: " + e.getMessage());
-            return false;
-        }
-    }
-
-
-    public boolean storeEncryptedMessageEventModel(String fromJid,
-                                                   String toJid,
-                                                   String messageId,
-                                                   String messageType,
-                                                   String encryptedContent,
-                                                   String replyToId,
-                                                   int groupVersion,
-                                                   int epoch) {
-
-        // 1. Generate the monotonic sortable ID anchor
-        String eventId = UlidCreator.getMonotonicUlid().toString().toUpperCase();
-
-        // 2. Exactly matching column count (17 structural items)
-        String sql = """
-            INSERT INTO events (
-                event_id,
-                event_category,
-                event_type,
-                group_id,
-                sender_id,
-                sender_jid,
-                group_version,
-                epoch,
-                encrypted_content,
-                reply_to_event_id,
-                created_at,
-                expires_at,
-                event_ref_id
-            ) VALUES (?, 'groupchat', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP(6), NOW() + INTERVAL 30 DAY, ?)
-            """;
-
-        try (Connection conn = pool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-
-            // Explicit structural mapping to prevent index confusion
-            stmt.setString(1, eventId);                 // Primary Key
-            stmt.setString(2, messageType);             // e.g., 'text', 'image'
-            stmt.setString(3, toJid);                   // group_id (the target destination)
-            stmt.setString(4, fromJid);                 // sender_id
-            stmt.setString(5, fromJid + "@server");     // sender_jid layout
-            stmt.setInt(6, groupVersion);               // Crucial state guardrail
-            stmt.setInt(7, epoch);                      // E2EE cryptographic tracking boundaries
-            stmt.setString(9, encryptedContent);        // Ciphertext payload
-            stmt.setString(11, replyToId);              // Parent event identifier reference
-
-
-            stmt.setString(12, messageId); // For deletion e.t.c
-
-            int rows = stmt.executeUpdate();
-
-            // Only call commit manually if your pool connection defaults to autoCommit = false
-            if (!conn.getAutoCommit()) {
-                conn.commit();
-            }
-
-            return rows > 0;
-
-        } catch (SQLException e) {
-            logger.severe("storeEncryptedMessageEventModel failed: " + e.getMessage());
-            return false;
-        }
-    }
-
-    /**
-     * Fetches a single, perfectly sorted timeline delta for a user across all
-     * 1-to-1 chats and authorized group membership windows.
-     * * @param userId The ID of the connecting user (e.g., 'alice_id')
-     * @param clientLastSeenUlid The highest ULID string the client has stored locally
-     * @param limit The maximum number of timeline events to return in a single page
-     */
-    public List<UnifiedTimelineItem> getUnifiedTimelineDelta(String userId, String clientLastSeenUlid, int limit) {
-        List<UnifiedTimelineItem> timeline = new ArrayList<>();
-
-        String sql = """
-            SELECT
-                e.event_id,
-                e.event_ref_id,
-                e.event_category,
-                e.event_type,
-                e.group_id,
-                e.sender_id,
-                e.sender_jid,
-                e.group_version,
-                e.epoch,
-                e.iv,
-                e.encrypted_content,
-                e.encrypted_metadata,
-                e.reply_to_event_id,
-                e.media_storage_key,
-                e.mime_type,
-                e.file_size_bytes,
-                e.created_at
-            FROM events e
-            LEFT JOIN group_member m
-              ON e.group_id = m.group_id AND m.user_id = ?
-            WHERE
-                -- Branch A: Direct private messages intended for this specific client
-                (e.event_category = 'chat' AND e.recipient_id = ? AND e.event_id > ?)
-                OR
-                -- Branch B: Group messages and events bound by historical residency windows
-                (e.event_category IN ('groupchat', 'system')
-                 AND m.user_id IS NOT NULL
-                 AND e.event_id > ?
-                 AND e.sender_id != ?
-                 AND e.event_id >= m.joined_at_id
-                 AND (m.left_at_id IS NULL OR e.event_id <= m.left_at_id))
-            ORDER BY e.event_id ASC
-            LIMIT ?;
-            """;
-
-        try (Connection conn = pool.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-
-            // Map the parameters cleanly to match the query indexes
-            stmt.setString(1, userId);             // For the LEFT JOIN evaluation
-            stmt.setString(2, userId);             // Branch A: recipient_id
-            stmt.setString(3, clientLastSeenUlid); // Branch A: anchor
-            stmt.setString(4, clientLastSeenUlid); // Branch B: anchor
-            stmt.setString(5, userId); // Exclude the message that the current session sent
-            stmt.setInt(6, limit);
-
-            try (ResultSet rs = stmt.executeQuery()) {
-                while (rs.next()) {
-                    timeline.add(mapRowToTimelineItem(rs));
-                }
-            }
-        } catch (SQLException e) {
-            logger.severe("Failed to pull unified timeline delta for user " + userId + ": " + e.getMessage());
-        }
-
-        return timeline;
-    }
-
-    private UnifiedTimelineItem mapRowToTimelineItem(ResultSet rs) throws SQLException {
-        return new UnifiedTimelineItem(
-                rs.getString("event_id"),
-                rs.getString("event_ref_id"),
-                rs.getString("event_category"),
-                rs.getString("event_type"),
-                rs.getString("group_id"),
-                rs.getString("sender_id"),
-                rs.getString("sender_jid"),
-                rs.getInt("group_version"),
-                rs.getInt("epoch"),
-                rs.getString("encrypted_content"),
-                rs.getString("reply_to_event_id"),
-                rs.getTimestamp("created_at")
-        );
-    }
-
-    /**
      * Represents a perfectly ordered, polymorphic timeline element
      * pulled from the unified 'events' table.
      */
@@ -410,21 +166,7 @@ public final class GroupRepository {
             String encryptedContent,    // Ciphertext payload or event JSON data
             String replyToEventId,      // Self-referencing structural link
             Timestamp createdAt         // Precise database capture stamp
-    ) {
-
-        // Quick helper tools to make your streaming routing conditions highly readable
-        public boolean isDirectMessage() {
-            return "chat".equals(eventCategory);
-        }
-
-        public boolean isGroupMessage() {
-            return "groupchat".equals(eventCategory);
-        }
-
-        public boolean isGroupEvent() {
-            return "system".equals(eventCategory);
-        }
-    }
+    ) { }
     // =========================================================================
     // Read
     // =========================================================================
@@ -861,8 +603,6 @@ public final class GroupRepository {
         public static LinkJoinResult groupFull(String groupId) {
             return new LinkJoinResult(Status.GROUP_FULL, groupId, 0);
         }
-
-        public boolean isSuccess() { return status == Status.SUCCESS; }
     }
 
 

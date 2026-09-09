@@ -18,14 +18,14 @@ import java.util.logging.Logger;
 
 /**
  * Custom JDBC connection pool - no external dependencies.
- *
+ * <p>
  * Design:
  *   - Fixed-size pool: min connections always open, grows to max under load
  *   - BlockingQueue holds available connections
  *   - Callers block up to connectionTimeoutMs waiting for one
  *   - Validation on borrow: dead connections are replaced transparently
  *   - Background evictor removes connections that have been idle too long
- *
+ * <p>
  * This replaces HikariCP with a simpler implementation that covers
  * all the cases we actually need.
  */

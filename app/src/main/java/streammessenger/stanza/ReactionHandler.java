@@ -81,7 +81,6 @@ public final class ReactionHandler implements StanzaHandler {
                         XMLEventReader reader,
                         Session session) {
 
-        logger.info("Reactions handler");
         if (!session.isAuthenticated()) {
             consumeElement(reader);
             return;
@@ -120,24 +119,20 @@ public final class ReactionHandler implements StanzaHandler {
                         " message_id='%s'" +
                         " reaction='%s'/>" +
                         "</message>",
-                //escapeXml(session.getContactId()),
                 userId,
                 REACTION_NS, "added",
                 escapeXml(req.messageId()),
                 escapeXml(req.reaction())
         );
 
-        registry.getByContactId(req.to()+"@localhost").ifPresentOrElse(s -> s.writeXML(notification), () -> {
+        registry.getByUserId(req.to()).ifPresentOrElse(s -> s.writeXML(notification), () -> {
             logger.info("The receiver of the reaction is offline, caching");
             // TODO: Save the reaction into the offline_message for the receiver
         });
 
         // Upsert: one reaction per user per message
         // If user already reacted, replace with new reaction
-        /**AddReactionResult result = upsertReaction(req.messageId(), userId, req.reaction());
-
-        if (result == null) return;
-
+        /**
         // Broadcast to all conversation participants
         broadcastReaction(req.messageId(), session.getContactId(),
                 userId, req.reaction(), "added", result.totalForType());*/

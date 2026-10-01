@@ -78,6 +78,7 @@ public final class SessionRegistry {
         });
 
         String userId = session.getUid();
+
         if (userId != null) {
             userIdsToSessionIds.compute(userId, (k, existingUids) -> {
                 Set<String> sessionIds = existingUids != null ? existingUids : ConcurrentHashMap.newKeySet();
@@ -87,8 +88,38 @@ public final class SessionRegistry {
 
             byUserIds.compute(userId, (k, set) -> {if(set == null)  set = ConcurrentHashMap.newKeySet();set.add(session);return set; });
 
-            // Add interests [Those who are interested in the current session updating his profile]
+            Set<String> contacts = Collections.emptySet();
 
+            register(session, contacts);
+        }
+
+        logger.info("Session bound: contactId=" + contactId
+                + " sessionId=" + session.getSessionId()
+                + " totalResourcesForContact=" + contactIdsToSessionIds.get(contactId).size());
+    }
+
+    public void bindAuthenticatedSession(String contactId, Session session, Set<String> contacts) {
+        logger.info("Using the latest bindAuthenticatedSession method");
+        contactIdsToSessionIds.compute(contactId, (k, existingUids) -> {
+            Set<String> sessionIds = existingUids != null
+                    ? existingUids
+                    : ConcurrentHashMap.newKeySet();
+            sessionIds.add(session.getSessionId());
+            return sessionIds;
+        });
+
+        String userId = session.getUid();
+
+        if (userId != null) {
+            userIdsToSessionIds.compute(userId, (k, existingUids) -> {
+                Set<String> sessionIds = existingUids != null ? existingUids : ConcurrentHashMap.newKeySet();
+                sessionIds.add(session.getSessionId());
+                return sessionIds;
+            });
+
+            byUserIds.compute(userId, (k, set) -> {if(set == null)  set = ConcurrentHashMap.newKeySet();set.add(session);return set; });
+
+            register(session, contacts);
         }
 
         logger.info("Session bound: contactId=" + contactId
@@ -100,13 +131,17 @@ public final class SessionRegistry {
         if(contacts.size() < 20_000) {
             Set<String> snapshot = Set.copyOf(contacts);
             for(String s : snapshot) {
-                interest.compute(s, (k, set) -> {
-                    if(set == null) {  set = ConcurrentHashMap.newKeySet(); }
-                    set.add(session);
-                    return set;
-                });
+                addInterest(session, s);
             }
         }
+    }
+
+    public void addInterest(Session s, String uid){
+        interest.compute(uid, (k, set) ->  {
+            if(set == null) { set = new HashSet<>(); }
+            set.add(s);
+            return set;
+        });
     }
 
     /**

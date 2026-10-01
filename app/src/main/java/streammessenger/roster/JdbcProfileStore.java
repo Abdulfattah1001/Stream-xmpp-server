@@ -1,6 +1,5 @@
 package streammessenger.roster;
 
-
 import java.sql.*;
 import java.util.*;
 
@@ -17,6 +16,7 @@ public final class JdbcProfileStore implements ProfileStore {
     @Override public Optional<Profile> find(Connection c, String userId) throws SQLException {
         return query(c, SELECT, userId);
     }
+
     @Override public Optional<Profile> lockForUpdate(Connection c, String userId) throws SQLException {
         return query(c, SELECT_FOR_UPDATE, userId);
     }
@@ -42,7 +42,8 @@ public final class JdbcProfileStore implements ProfileStore {
         }
     }
 
-    @Override public boolean updateCas(Connection c, Profile next, long expectedVersion) throws SQLException {
+    @Override
+    public boolean updateCas(Connection c, Profile next, long expectedVersion) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(UPDATE_CAS)) {
             ps.setLong(1, next.version()); ps.setString(2, next.displayName()); ps.setString(3, next.avatarHash());
             ps.setString(4, next.statusText()); ps.setString(5, MetadataCodec.encode(next.metadata()));

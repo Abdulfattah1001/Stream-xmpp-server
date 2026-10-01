@@ -123,6 +123,7 @@ public final class ProfileSyncManager implements AutoCloseable {
             changed = scanSince(since, contacts);
             if (changed == null) return full(iqId, upto);
         }
+
         return ProfileWire.syncResult(iqId, since, upto, changed);
     }
 

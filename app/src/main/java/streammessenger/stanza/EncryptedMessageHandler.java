@@ -96,7 +96,6 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                        XMLEventReader reader,
                        Session session) {
         if (!session.isAuthenticated()) {
-            logger.info("Unauthenticated message from uid=" + session.getSessionId());
             consumeElement(reader);
             return;
         }

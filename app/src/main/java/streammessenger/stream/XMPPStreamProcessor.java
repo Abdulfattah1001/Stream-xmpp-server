@@ -44,6 +44,7 @@ import streammessenger.stanza.ScheduledMessageHandler;
 import streammessenger.stanza.StanzaHandler;
 import streammessenger.stanza.StatusHandler;
 import streammessenger.stanza.VerifiedAccountHandler;
+import streammessenger.sync.SyncNode;
 import streammessenger.xep.sm.StreamManagementHandler;
 
 
@@ -90,7 +91,7 @@ public final class XMPPStreamProcessor {
                                ServerMetrics metrics, ConnectionPool pool,
                                CarbonHandler carbonHandler,
                                MultiDeviceMessageHandler multiDeviceMessageHandler,
-                               CallSignalingHandler callHandler, ServerConfig config) {
+                               CallSignalingHandler callHandler, ServerConfig config, SyncNode syncNode) {
         CollaborativeNoteHandler collaborativeNoteHandler = new CollaborativeNoteHandler(pool, registry);
         ReactionHandler reactionHandler = new ReactionHandler(pool, registry);
         CRDTNoteHandler crdtNoteHandler =  new CRDTNoteHandler(pool, registry);
@@ -110,7 +111,7 @@ public final class XMPPStreamProcessor {
         //TODO: Not encrypted message:this.handlers.put("message",  new MessageHandler(registry, db, metrics));
         this.handlers.put("message", encryptedMessageHandler);
         this.handlers.put("presence", new PresenceHandler(registry, db));
-        this.handlers.put("iq",       new IQHandler(db, registry, rosterManager, callHandler, collaborativeNoteHandler, crdtNoteHandler, config, pool));
+        this.handlers.put("iq",       new IQHandler(db, registry, rosterManager, callHandler, collaborativeNoteHandler, crdtNoteHandler, config, pool, syncNode));
         this.handlers.put("status-iq",new StatusHandler(db, registry));
         this.handlers.put("call",     callHandler);
         this.handlers.put("note",     collaborativeNoteHandler);

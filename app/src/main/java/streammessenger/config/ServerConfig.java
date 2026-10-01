@@ -90,10 +90,6 @@ public final class ServerConfig {
                 ? requireProperty(props, "devTlsCertPath")
                 : requireProperty(props, "prodTlsCertPath");
 
-        // Passwords MUST come from env variables - never properties files
-        //char[] ksPassword = requireSecret("KEYSTORE_PASSWORD");
-        //char[] keyPassword = requireSecret("KEY_PASSWORD");
-
         SSLContext sslContext;
 
         if(isDev){

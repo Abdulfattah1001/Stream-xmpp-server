@@ -6,6 +6,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
+import java.sql.SQLException;
 import java.util.Base64;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -37,7 +38,9 @@ import streammessenger.metrics.ServerMetrics;
 import streammessenger.mutlidevice.CarbonManager;
 import streammessenger.mutlidevice.DeviceManager;
 import streammessenger.mutlidevice.MultiDeviceMessageHandler;
+import streammessenger.profile.ProfileStore;
 import streammessenger.push.PushNotificationService;
+import streammessenger.roster.ChangeSequencer;
 import streammessenger.roster.PrivacyEngine;
 import streammessenger.roster.RosterManager;
 import streammessenger.security.RateLimiter;
@@ -45,11 +48,13 @@ import streammessenger.session.Session;
 import streammessenger.session.SessionReaper;
 import streammessenger.session.SessionRegistry;
 import streammessenger.stanza.CarbonHandler;
-import streammessenger.stanza.MessageHandler;
 import streammessenger.stanza.ReactionHandler;
-import streammessenger.stanza.ScheduledMessageHandler;
 import streammessenger.stanza.VerifiedAccountHandler;
 import streammessenger.stream.XMPPStreamProcessor;
+import streammessenger.sync.CounterRowSequencer;
+import streammessenger.sync.SyncChangeLog;
+import streammessenger.sync.SyncNode;
+import streammessenger.sync.SyncWorker;
 import streammessenger.vhost.DomainConfig;
 import streammessenger.vhost.VirtualHostManager;
 
@@ -140,8 +145,8 @@ public class Server {
     //MUC
     private final GroupRepository groupRepository;
     private final GroupStanzaHandler groupStanzaHandler;
-    //private final SenderKeyManager senderKeyManager;
     private final PrivacyEngine privacyEngine;
+    private final SyncNode syncNode;
 
 
     // -------------------------------------------------------------------------
@@ -171,6 +176,9 @@ public class Server {
                 }
             }
     );
+
+    /*private final SyncWorker syncWorker;
+    private final ProfileUpdateServices updateServices;*/
 
     // -------------------------------------------------------------------------
     // Singleton
@@ -244,12 +252,18 @@ public class Server {
 
         // Voice/Video call signaling
         this.callHandler = new CallSignalingHandler(
-                connectionPool, registry, pushService);
+                connectionPool, registry, pushService, config);
+
+        /*this.syncWorker = new SyncWorker(registry, metrics, new SyncChangeLog(connectionPool, new CounterRowSequencer()),
+                profileDatabaseManager);
+
+        this.updateServices = new ProfileUpdateServices(profileDatabaseManager, syncWorker::hint);*/
+        this.syncNode = new SyncNode(connectionPool,  config, metrics, registry, new SyncChangeLog(connectionPool,  new CounterRowSequencer()), new ProfileStore());
 
         this.streamProcessor = new XMPPStreamProcessor(
                 db, registry, authManager, rosterManager, metrics, connectionPool,
                 new CarbonHandler(carbonManager, deviceManager),
-                multiDeviceHandler, callHandler, config);
+                multiDeviceHandler, callHandler, config, this.syncNode);
 
         this.sessionReaper = new SessionReaper(
                 registry, metrics,
@@ -336,6 +350,12 @@ public class Server {
 
         ThreadPoolExecutor jobPool = buildJobPool();
         jobPool.prestartCoreThread();
+        try {
+            //syncWorker.start();
+            syncNode.start();
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
 
         try {
             serverSocket = new ServerSocket(PORT);

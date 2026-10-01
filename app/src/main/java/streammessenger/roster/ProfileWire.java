@@ -10,7 +10,7 @@ import java.io.StringReader;
 import java.util.*;
 
 public final class ProfileWire {
-    public static final String NS = "urn:example:profile-sync:1";
+    public static final String NS = "urn:xmpp:profile-sync:1";
     private ProfileWire() {}
 
     public record Invalidation(String userId, long version, long seq) {}

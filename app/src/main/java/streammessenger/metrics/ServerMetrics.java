@@ -6,10 +6,10 @@ import java.util.logging.Logger;
 
 /**
  * Lock-free, thread-safe server metrics.
- *
+ * <p>
  * LongAdder is used for high-write counters (better than AtomicLong under contention).
  * AtomicLong is used for gauges that need precise reads (like active connections).
- *
+ * <p>
  * In production: expose these via JMX MBean, 
  * a /metrics HTTP endpoint, or Prometheus JVM agent.
  */
@@ -23,6 +23,10 @@ public final class ServerMetrics {
     private final AtomicLong authenticatedSessions = new AtomicLong(0);
 
     // Counters
+    private final AtomicLong lowWatermark = new AtomicLong();
+    private final AtomicLong maxSeqSeen = new AtomicLong();
+    private final LongAdder workerPolls = new LongAdder();
+    private final LongAdder profileUpdates = new LongAdder();
     private final LongAdder totalConnectionsAccepted = new LongAdder();
     private final LongAdder totalConnectionsRejected = new LongAdder();
     private final LongAdder tlsUpgradesSucceeded = new LongAdder();
@@ -34,10 +38,17 @@ public final class ServerMetrics {
     private final LongAdder messagesSent = new LongAdder();
     private final LongAdder messagesOfflineStored = new LongAdder();
 
+
     private ServerMetrics() {}
 
     public static ServerMetrics getInstance() { return INSTANCE; }
 
+    public void setLowWatermark(long lw) { lowWatermark.set(lw); }
+
+    public void setMaxSeqSeen(long maxSeq) { maxSeqSeen.set(maxSeq); }
+
+    public void workerPolls() { workerPolls.increment(); }
+    public void profileUpdates() { profileUpdates.increment(); }
     public void connectionAccepted() {
         activeConnections.incrementAndGet();
         totalConnectionsAccepted.increment();

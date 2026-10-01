@@ -6,7 +6,7 @@ import javax.naming.NamingException;
 import javax.naming.directory.Attribute;
 
 // Clients and servers find us via DNS SRV records
-// _xmpp-client._tcp.yourdomain.com -> your server IP
+// _xmpp-client._tcp.omnyrex.com -> your server IP
 // Without this, clients can't auto-discover your server
 public final class XMPPDnsResolver {
 

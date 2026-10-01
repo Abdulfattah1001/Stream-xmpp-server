@@ -65,7 +65,6 @@ public final class ConnectionHandler implements Runnable {
 
     @Override
     public void run() {
-
         Session session = new Session(socket, sessionId, scheduler);
         registry.register(session);
         metrics.connectionAccepted();

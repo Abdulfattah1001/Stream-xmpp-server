@@ -102,7 +102,7 @@ public final class ScheduledMessageHandler implements StanzaHandler {
         });
 
         // Re-schedule any pending messages from DB on startup
-        loadPendingFromDatabase();
+        // TODO: loadPendingFromDatabase();
     }
 
     @Override

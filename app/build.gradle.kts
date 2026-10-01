@@ -26,6 +26,8 @@ dependencies {
     implementation("com.mysql:mysql-connector-j:9.1.0")
     implementation("org.json:json:20250107")
 
+    implementation("com.twilio.sdk:twilio:13.0.1")
+
     implementation("com.google.firebase:firebase-admin:9.4.0")
 
     implementation("com.google.protobuf:protobuf-java:4.31.1")

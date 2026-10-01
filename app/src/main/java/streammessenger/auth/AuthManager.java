@@ -3,6 +3,7 @@ package streammessenger.auth;
 
 import java.util.Base64;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 
@@ -217,7 +218,9 @@ public final class AuthManager {
         session.touchActivity();
 
         // Register in secondary index for message routing by userIds
-        registry.bindAuthenticatedSession(validate.contactId(), session);
+        Set<String> contacts = db.contact(validate.userId());
+        logger.info("Roster size is: "+contacts.size());
+        registry.bindAuthenticatedSession(validate.contactId(), session, contacts);
         metrics.sessionAuthenticated();
 
         logger.info("Authenticated:" +

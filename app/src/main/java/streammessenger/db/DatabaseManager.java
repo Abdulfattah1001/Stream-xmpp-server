@@ -8,9 +8,11 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.logging.Logger;
 
 import streammessenger.api.GroupController;
@@ -1020,6 +1022,23 @@ public final class DatabaseManager {
         return notes;
     }
 
+    public Set<String> getContactEdges(String uid) {
+        Set<String> contacts = new HashSet<>();
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement("SELECT * FROM contact_edges  WHERE owner_user_id = ?");
+            stmt.setString(1, uid);
+            ResultSet rs = stmt.executeQuery();
+            connection.commit();
+            while(rs.next()){
+                contacts.add(rs.getString("contact_user_id"));
+            }
+        }catch (SQLException exception){
+            logger.info("Error getContacts: "+exception.getMessage());
+        }
+
+        return contacts;
+    }
+
     public List<String> getContacts(String uid){
         List<String> uids = new ArrayList<>();
         String sql = "SELECT contact_uid FROM contacts_relationships WHERE owner_uid = ?";
@@ -1033,6 +1052,23 @@ public final class DatabaseManager {
             }
         } catch (SQLException e) {
             logger.info("getContacts error: "+e.getMessage());
+        }
+        return uids;
+    }
+
+    public Set<String> contact(String uid){
+        Set<String> uids = new HashSet<>();
+        String sql = "SELECT * FROM contact_edges WHERE owner_user_id = ?";
+        try(Connection connection = pool.getConnection()){
+            PreparedStatement stmt = connection.prepareStatement(sql);
+            stmt.setString(1, uid);
+
+            ResultSet rs = stmt.executeQuery();
+            while(rs.next()){
+                uids.add(rs.getString("contact_user_id"));
+            }
+        } catch (SQLException e) {
+            logger.info("contacts error: "+e.getMessage());
         }
         return uids;
     }
@@ -1213,6 +1249,7 @@ public final class DatabaseManager {
 
         return items;
     }
+
 
     public RosterItem getRosterItem(String ownerJid, String contactJid) {
         String sql = """
@@ -1611,6 +1648,14 @@ public final class DatabaseManager {
             logger.info("changeDisplayStatus error: "+e.getMessage());
         }
         return false;
+    }
+
+
+    // ========================================================================
+    // UPDATE ON PROFILES NEW VERSION
+    // ========================================================================
+    public void updateProfile() {
+
     }
 
     // =========================================================================
@@ -2625,20 +2670,21 @@ public final class DatabaseManager {
      * that's likely the user's primary device.
      */
     public PushTarget getPushTarget(String userId) {
+
         String sql = """
             SELECT
-                st.push_token,
-                st.platform,
-                st.device_label,
-                u.display_name
-            FROM session_tokens st
-            INNER JOIN users u ON u.user_id = st.user_id
-            WHERE st.user_id    = ?
-              AND st.revoked_at IS NULL
-              AND st.push_token IS NOT NULL
+                dv.push_token,
+                dv.platform,
+                dv.device_label,
+                u.username
+            FROM devices dv
+            INNER JOIN users u ON u.user_id = dv.user_id
+            WHERE dv.user_id    = ?
+             
+              AND dv.push_token IS NOT NULL
               AND u.active = true
               AND u.deleted_at IS NULL
-            ORDER BY st.last_used_at DESC
+            ORDER BY dv.last_seen_at DESC
             LIMIT 1
             """;
 
@@ -2654,7 +2700,7 @@ public final class DatabaseManager {
                         rs.getString("push_token"),
                         rs.getString("platform"),
                         rs.getString("device_label"),
-                        rs.getString("display_name")
+                        rs.getString("username")
                 );
             }
 

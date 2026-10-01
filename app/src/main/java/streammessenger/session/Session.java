@@ -7,6 +7,7 @@ import java.io.OutputStreamWriter;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -191,6 +192,17 @@ public class Session {
     public boolean writeStreamError(StreamException.Condition condition, String text) {
         String xml = buildStreamError(condition, text);
         return writeXML(xml);
+    }
+
+    public void invalidate(String uid, long version, long seq) {
+        writeXML(String.format(
+                """
+                <message id='%s'>
+                  <profile-invalidate xmlns="urn:xmpp:profile-sync:1">
+                    <item user='%s' version="%d" seq='%d'/>
+                  </profile-invalidate>
+                </message>""", UUID.randomUUID().toString(), uid, version, seq
+        ));
     }
 
     /**

@@ -9,6 +9,7 @@ import javax.xml.namespace.QName;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Logger;
 
@@ -53,11 +54,20 @@ public final class PresenceHandler implements StanzaHandler {
 
         // Broadcast to all authenticated sessions (excluding sender) that is  on the current user rosters
         int broadcast = 0;
-        for (Session other : registry.getAllSessions()) {
+        /*for (Session other : registry.getAllSessions()) {
             if (!other.getSessionId().equals(session.getSessionId()) && other.isAuthenticated()) {
                 other.writeXML(presenceXml);
                 broadcast++;
             }
+        }*/
+
+        // TODO:
+        Set<Session> sessions = registry.interestedIn(session.getUid());
+
+        for(Session other : sessions) {
+            if(other.getUid().equals(session.getUid())) continue;
+            other.writeXML(presenceXml);
+            broadcast++;
         }
 
         logger.fine("Presence broadcast from " + session.getJid()
@@ -76,6 +86,7 @@ public final class PresenceHandler implements StanzaHandler {
      * then messages (so they appear after the contact list is current).
      */
     private void deliverPendingItems(Session session) {
+        logger.info("delivering pending items ....");
         String contactId = session.getContactId();
         // 1. Deliver pending subscription requests
         deliverPendingSubscriptions(session, contactId);

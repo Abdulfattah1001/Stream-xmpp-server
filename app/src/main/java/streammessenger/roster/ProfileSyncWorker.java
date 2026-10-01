@@ -37,7 +37,8 @@ public final class ProfileSyncWorker implements Runnable {
         long start = log.maxSeq();
         tracker = new SequenceGapTracker(start, cfg.gapTimeoutMs(), cfg.maxTrackedSeqs());
         metrics.lowWatermark.set(start);
-        metrics.maxSeqSeen.set(start);thread = new Thread(this, "profile-sync-worker[" + cfg.nodeId() + "]");
+        metrics.maxSeqSeen.set(start);
+        thread = new Thread(this, "profile-sync-worker[" + cfg.nodeId() + "]");
         thread.setDaemon(true);
         thread.start();
     }
@@ -54,6 +55,7 @@ public final class ProfileSyncWorker implements Runnable {
 
     public long lowWatermark() { SequenceGapTracker t = tracker; return t == null ? -1 : t.lowWatermark(); }
 
+    @SuppressWarnings("ALL")
     @Override
     public void run() {
         long backoff = cfg.pollIntervalMs();
@@ -61,7 +63,10 @@ public final class ProfileSyncWorker implements Runnable {
             try {
                 boolean more = pollOnce();
                 backoff = cfg.pollIntervalMs();
-                if (!more) { wake.tryAcquire(cfg.pollIntervalMs(), TimeUnit.MILLISECONDS); wake.drainPermits(); }
+                if (!more) {
+                    wake.tryAcquire(cfg.pollIntervalMs(), TimeUnit.MILLISECONDS);
+                    wake.drainPermits();
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt(); return;
             } catch (SQLException | RuntimeException e) {
@@ -112,6 +117,7 @@ public final class ProfileSyncWorker implements Runnable {
             changeObserver.accept(ch);                          // evict node cache BEFORE clients are told
             for (ClientSession s : registry.interestedIn(ch.userId())) s.invalidate(ch.userId(), ch.version(), ch.seq());
         }
+
         if (registry.hasUnindexed()) {
             Map<String, ProfileChange> byUser = new HashMap<>();
             for (ProfileChange ch : changes) byUser.put(ch.userId(), ch);

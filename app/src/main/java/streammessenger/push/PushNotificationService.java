@@ -147,15 +147,20 @@ public final class PushNotificationService {
                                          String callType,
                                          String callId){
 
+        logger.info("Sending a push notification to the callee");
+
         executor.execute(() -> {
+
             DatabaseManager.PushTarget target = db.getPushTarget(toUserId);
+
             if(target == null || target.pushToken() == null) return;
 
             String emoji = "video".equals(callType) ? "📹" : "📞";
+
             sendPush(target,
                     emoji + " Incoming " + callType + " call",
                     callerDisplayName,
-                    "call",
+                    "video",
                     toUserId, callId);
         });
     }
@@ -231,12 +236,12 @@ public final class PushNotificationService {
                 + System.currentTimeMillis() / 60_000; // 1-minute window
 
         boolean success = false;
+
         String errorCode = null;
 
         try {
             if ("android".equalsIgnoreCase(target.platform())) {
-                success = sendFCM(target.pushToken(), title, body,
-                        type, referenceId);
+                success = sendFCM(target.pushToken(), title, body, type, referenceId);
             } else if ("ios".equalsIgnoreCase(target.platform())) {
                 success = sendAPNs(target.pushToken(), title, body,
                         type, referenceId);
@@ -247,9 +252,9 @@ public final class PushNotificationService {
         }
 
         // Log the attempt
-        db.logPushNotification(toUserId, target.pushToken(),
+        /*db.logPushNotification(toUserId, target.pushToken(),
                 target.platform(), type, referenceId,
-                success, errorCode, idempotencyKey);
+                success, errorCode, idempotencyKey);*/
 
         if (!success && "TOKEN_EXPIRED".equals(errorCode)) {
             // Token is invalid - clear it so we stop trying
@@ -271,7 +276,7 @@ public final class PushNotificationService {
         String url = String.format(FCM_URL, fcmProjectId);
 
         // Build FCM v1 payload
-        String payload = String.format("""
+        String payloadOld = String.format("""
             {
               "message": {
                 "token": "%s",
@@ -297,6 +302,30 @@ public final class PushNotificationService {
                 escapeJson(title),
                 escapeJson(body),
                 type,
+                referenceId != null ? referenceId : ""
+        );
+
+        String payload = String.format("""
+                        {
+                          "message": {
+                            "token": "%s",
+                            "data": {
+                              "type": "%s",
+                              "uid": "%s",
+                              "info": "{\\"displayName\\":\\"Abdulfattah Ameen\\",\\"displayStatus\\":\\"If not me, then who?\\"}",
+                              "reference_id": "%s",
+                              "sessionId": "%s"
+                            },
+                            "android": {
+                              "priority": "HIGH"
+                            }
+                          }
+                        }
+            """,
+                escapeJson(token),
+                type,
+                "u_c8705362",
+                referenceId != null ? referenceId : "",
                 referenceId != null ? referenceId : ""
         );
 

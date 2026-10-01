@@ -43,8 +43,10 @@ public final class ProfileUpdateService {
         while (true) {
             try {
                 UpdateResult r = Jdbc.inTransaction(ds, c -> apply(c, userId, expectedVersion, mutation));
-                if (r.changed()) { metrics.profileUpdates.increment(); afterCommit.accept(r.changeSeq()); }
-                else metrics.profileUpdateNoops.increment();
+                if (r.changed()) {
+                    metrics.profileUpdates.increment();
+                    afterCommit.accept(r.changeSeq());
+                } else metrics.profileUpdateNoops.increment();
                 return r;
             } catch (ProfileConflictException e) {
                 metrics.profileUpdateConflicts.increment();
@@ -64,19 +66,28 @@ public final class ProfileUpdateService {
             current = Profile.initial(userId, now);
             store.insert(c, current);
         }
+
         if (expectedVersion.isPresent() && expectedVersion.getAsLong() != current.version()) {
             throw new ProfileConflictException(userId, expectedVersion.getAsLong(), current.version());
         }
+
         Profile proposed = mutation.apply(current);
+
         if (!proposed.userId().equals(userId)) throw new IllegalStateException("mutation changed userId");
+
         int mask = current.diffMask(proposed);
+
         if (mask == 0) return new UpdateResult(current, -1, false);   // idempotent: identical retry → no version, no change row
 
         Profile next = proposed.withVersion(current.version() + 1, now);
+
+        // Updates the profiles table
         if (!store.updateCas(c, next, current.version())) {
             throw new IllegalStateException("CAS failed while holding row lock for " + userId);   // would indicate a broken isolation setup
         }
+
         long seq = changeLog.append(c, userId, next.version(), mask, now);
+
         return new UpdateResult(next, seq, true);
     }
 

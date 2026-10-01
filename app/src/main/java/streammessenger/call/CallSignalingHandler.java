@@ -1,18 +1,24 @@
 package streammessenger.call;
 
 
+import com.twilio.jwt.accesstoken.AccessToken;
+import com.twilio.jwt.accesstoken.VideoGrant;
+
 import javax.xml.namespace.QName;
 import javax.xml.stream.XMLEventReader;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.events.Attribute;
 import javax.xml.stream.events.StartElement;
 import javax.xml.stream.events.XMLEvent;
+
+import java.nio.charset.StandardCharsets;
 import java.sql.*;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
 
+import streammessenger.config.ServerConfig;
 import streammessenger.db.ConnectionPool;
 import streammessenger.push.PushNotificationService;
 import streammessenger.session.Session;
@@ -116,12 +122,15 @@ public final class CallSignalingHandler implements StanzaHandler {
     private final SessionRegistry registry;
     private final PushNotificationService pushService;
 
+    private final ServerConfig config;
+
     public CallSignalingHandler(ConnectionPool pool,
                                 SessionRegistry registry,
-                                PushNotificationService pushService) {
+                                PushNotificationService pushService, ServerConfig config) {
         this.pool        = pool;
         this.registry    = registry;
         this.pushService = pushService;
+        this.config = config;
     }
 
     @Override
@@ -182,11 +191,11 @@ public final class CallSignalingHandler implements StanzaHandler {
         String calleeJid = toBareJid(req.to());
         String calleeId  = extractUserId(calleeJid);
         String callId = UUID.randomUUID().toString();
-        // Twilio room name = call_id (same UUID)
         String roomName = "call-"+callId;
 
         // Check caller not already in a call
         if (isInActiveCall(callerId)) {
+            logger.info("Already in a call...");
             callerSession.writeXML(String.format(
                 "<iq type='result' id='%s'>" +
                 "<call xmlns='%s' action='busy'>" +
@@ -327,6 +336,7 @@ public final class CallSignalingHandler implements StanzaHandler {
         }
 
         CallState state = activeCalls.get(req.callId());
+
         if (state == null) {
             sendError(calleeSession, iqId, "item-not-found");
             return;
@@ -334,38 +344,62 @@ public final class CallSignalingHandler implements StanzaHandler {
 
         // Cancel ring timeout
         ScheduledFuture<?> timeout = ringTimeouts.remove(req.callId());
+
         if (timeout != null) timeout.cancel(false);
 
         // Update state
         activeCalls.put(req.callId(), state.withState("active"));
+
         updateCallState(req.callId(), "answered", System.currentTimeMillis());
 
-        // Acknowledge to callee
+        logger.info("The caller ID is: " + state.callerId() + "with JID " + state.callerJid());
+        logger.info("The caller ID is: " + state.calleeId() + "with JID " + state.calleeJid());
+
+        String callerToken = twilioTokenGenerator(state.callerId(), req.callId());
+        String calleeToken = twilioTokenGenerator(calleeSession.getUid(), req.callId());
+
+        String roomName = videoRoomNameGenerator();
+        // Acknowledge to callee with the twilio token still using the iqId of the answer action
         calleeSession.writeXML(String.format(
             "<iq type='result' id='%s'>" +
             "<call xmlns='%s' action='answered'>" +
             "<call_id>%s</call_id>" +
+             "<room_name> %s </room_name>" +
+             "<token> %s </token>" +
             "</call></iq>",
-            escapeXml(iqId), CALL_NS, req.callId()
+            escapeXml(iqId), CALL_NS, req.callId(), roomName, calleeToken
         ));
 
-        // Route SDP answer to caller
-        String answerStanza = String.format(
-            "<iq type='set' from='%s' to='%s'>" +
-            "<call xmlns='%s' action='answer'>" +
-            "<call_id>%s</call_id>" +
-            "<sdp>%s</sdp>" +
-            "</call></iq>",
-            escapeXml(calleeSession.getContactId()),
-            escapeXml(state.callerJid()),
-            CALL_NS,
-            escapeXml(req.callId()),
-            escapeXml(req.sdp())
-        );
+        //Acknowledge to the caller with the twilio token
+        Optional<Session> caller = registry.getByUserId(state.callerId());
 
-        registry.getByContactId(state.callerJid())
+        if(caller.isEmpty()) {
+            logger.info("Caller is absent");
+        }else {
+            logger.info("Caller is present, routing the answer to him ");
+            // Route SDP answer to caller
+            String answerStanza = String.format(
+                    "<iq type='set' from='%s' to='%s'>" +
+                            "<call xmlns='%s' action='answer'>" +
+                            "<call_id>%s</call_id>" +
+                            "<sdp>%s</sdp>" +
+                            "<room_name> %s </room_name>" +
+                            "<token> %s </token>" +
+                            "</call></iq>",
+                    escapeXml(calleeSession.getContactId()),
+                    escapeXml(state.callerJid()),
+                    CALL_NS,
+                    escapeXml(req.callId()),
+                    escapeXml(req.sdp()),
+                    escapeXml(roomName),
+                    escapeXml(callerToken)
+            );
+            caller.get().writeXML(answerStanza);
+        }
+
+        /*registry.getByUserId(state.callerId())
                 .filter(Session::isAuthenticated)
-                .ifPresent(s -> s.writeXML(answerStanza));
+                .ifPresent(s -> s.writeXML(answerStanza));*/
 
         logger.info("Call answered: callId=" + req.callId());
     }
@@ -380,6 +414,7 @@ public final class CallSignalingHandler implements StanzaHandler {
     private void handleDecline(CallRequest req,
                                 String iqId,
                                 Session calleeSession) {
+        logger.info("Handling declining calls ... ");
 
         if (req.callId() == null) {
             sendError(calleeSession, iqId, "bad-request");
@@ -404,7 +439,7 @@ public final class CallSignalingHandler implements StanzaHandler {
             "<iq type='result' id='%s'/>", escapeXml(iqId)));
 
         // Notify caller
-        registry.getByContactId(state.callerJid())
+        /*registry.getByContactId(state.callerJid())
                 .filter(Session::isAuthenticated)
                 .ifPresent(s -> s.writeXML(String.format(
                     "<message from='%s'>" +
@@ -413,9 +448,25 @@ public final class CallSignalingHandler implements StanzaHandler {
                     "</call></message>",
                     escapeXml(calleeSession.getContactId()),
                     CALL_NS, req.callId()
-                )));
+                )));*/
+
+        Optional<Session> caller = registry.getByUserId(state.callerId());
+        caller.ifPresent(session -> session.writeXML(String.format(
+                "<message from='%s' id='%s' to='%s'>" +
+                        "<call xmlns='%s' action='declined'>" +
+                        "<call_id>%s</call_id>" +
+                        "</call></message>",
+                escapeXml(calleeSession.getContactId()),
+                UUID.randomUUID().toString(),
+                session.getUid(),
+                CALL_NS, req.callId()
+        )));
 
         logger.info("Call declined: callId=" + req.callId());
+    }
+
+    private String videoRoomNameGenerator() {
+        return UUID.randomUUID().toString();
     }
 
     // =========================================================================
@@ -488,6 +539,8 @@ public final class CallSignalingHandler implements StanzaHandler {
                             String iqId,
                             Session senderSession) {
 
+        logger.info("Handling calls ended event");
+
         if (req.callId() == null) {
             sendError(senderSession, iqId, "bad-request");
             return;
@@ -505,6 +558,8 @@ public final class CallSignalingHandler implements StanzaHandler {
                 : 0;
         int durationSeconds = (int) (durationMs / 1000);
 
+        logger.info("Calls duratioin is: "+durationSeconds);
+
         // Update DB
         updateCallEnded(req.callId(), durationSeconds);
 
@@ -521,7 +576,7 @@ public final class CallSignalingHandler implements StanzaHandler {
 
         // Notify the other party
         if (state != null) {
-            String senderJid    = senderSession.getContactId();
+            String senderJid    = senderSession.getUid();
             String recipientJid = state.callerJid().equals(senderJid)
                     ? state.calleeJid()
                     : state.callerJid();
@@ -557,6 +612,7 @@ public final class CallSignalingHandler implements StanzaHandler {
                              String iqId,
                              Session calleeSession) {
 
+        logger.info("Handling busy call events");
         if (req.callId() == null) {
             sendError(calleeSession, iqId, "bad-request");
             return;
@@ -587,6 +643,29 @@ public final class CallSignalingHandler implements StanzaHandler {
                     escapeXml(calleeSession.getContactId()),
                     CALL_NS, req.callId()
                 )));
+    }
+
+    private String twilioTokenGenerator(String uid, String name) {
+        String twilioAccountSid = config.getApnsBundleId();
+        String twilioApiKey = config.getCloudinaryApiKey();
+        String twilioApiSecret = config.getCloudinaryApiSecret();
+
+        // Required for Video
+        String identity = uid;
+
+        // Create Video grant
+        VideoGrant grant = new VideoGrant().setRoom(name);
+
+        // Create access token
+        AccessToken token = new AccessToken.Builder(
+                twilioAccountSid,
+                twilioApiKey,
+                twilioApiSecret.getBytes(StandardCharsets.UTF_8)
+        ).identity(identity).grant(grant).build();
+
+        System.out.println(token.toJwt());
+
+        return token.toJwt();
     }
 
     // =========================================================================
@@ -687,7 +766,7 @@ public final class CallSignalingHandler implements StanzaHandler {
     }
 
     private String getDisplayName(String userId) {
-        String sql = "SELECT display_name FROM users WHERE user_id = ?";
+        String sql = "SELECT username FROM users WHERE user_id = ?";
 
         try (Connection conn = pool.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
@@ -729,7 +808,7 @@ public final class CallSignalingHandler implements StanzaHandler {
                     if ("call".equals(name) && CALL_NS.equals(ns)) {
                         action   = getAttr(se, "action");
                         callType = getAttr(se, "type") != null
-                                ? getAttr(se, "type") : "voice";
+                                ? getAttr(se, "type") : "video";
 
                     }
 

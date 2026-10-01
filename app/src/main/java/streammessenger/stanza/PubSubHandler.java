@@ -1,8 +1,14 @@
 package streammessenger.stanza;
 
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
+import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.logging.Logger;
 
 import javax.xml.namespace.QName;
@@ -12,33 +18,41 @@ import javax.xml.stream.events.Attribute;
 import javax.xml.stream.events.StartElement;
 import javax.xml.stream.events.XMLEvent;
 
+import streammessenger.db.ConnectionPool;
 import streammessenger.db.DatabaseManager;
+import streammessenger.profile.Profile;
+import streammessenger.profile.ProfileMutation;
+import streammessenger.profile.UpdateService;
+import streammessenger.roster.ProfileVersion;
 import streammessenger.session.Session;
 import streammessenger.session.SessionRegistry;
+import streammessenger.sync.SyncNode;
+import streammessenger.sync.Version;
 
-public class PubSubHandler implements StanzaHandler{
+public class PubSubHandler implements StanzaHandler {
+    public static final String PROFILE_SYNC_NS = "urn:xmpp:profile-sync:1";
     private static final Logger logger = Logger.getLogger(PubSubHandler.class.getName());
     private final DatabaseManager db;
     private final SessionRegistry registry;
+    private final ConnectionPool pool;
+    private final SyncNode syncNode;
 
-    public PubSubHandler(DatabaseManager db, SessionRegistry registry){
-        this.db = db;
-        this.registry = registry;
+    public PubSubHandler(ConnectionPool pool, DatabaseManager db, SessionRegistry registry, SyncNode syncNode){
+        this.db = db; this.pool = pool;
+        this.registry = registry; this.syncNode = syncNode;
     }
 
     @Override
     public void handle(StartElement element, XMLEventReader reader, Session session) {
-        logger.info("Processing PubSub stanza");
 
         String iqId = getAttr(element, "id");
+
         if (!session.isAuthenticated()) {
             sendError(session, null, "not-authorized");
             consumeElement(reader);
             return;
         }
 
-        String contactId = session.getContactId();
-        // Parsed the pubsub stanza here
         ParsedProfileMetadata p = parsedProfileMetadata(reader);
 
         if(p == null){
@@ -46,99 +60,110 @@ public class PubSubHandler implements StanzaHandler{
             return;
         }
 
-        if(p.displayStatus() != null){
-            boolean updated = db.changeDisplayStatus(session.getUid(),  p.displayStatus());
-            if(updated){
-                session.writeXML(String.format("<iq type='result' id='%s'/>", iqId));
-                consumeElement(reader);
+        if(p.displayStatus() != null) {
+            ProfileMutation mutation = ProfileMutation.statusText(p.displayStatus());
+            try {
+                UpdateService updateService = syncNode.getProfileUpdateService();
+                UpdateService.UpdateResult result = updateService.update(session.getUid(), null, mutation);
+                logger.info("Updated result is: "+result.profile().statusText());
+            } catch (SQLException e) {
+                logger.info("Error occurred updating user display status: "+e.getMessage());
+            }
+        }
 
-                // Fanout to online contacts
-                List<String> uids = db.getContacts(session.getUid());
-                if(uids.isEmpty()) return;
-
-                for(String uid: uids){
-                    if(uid.equals(session.getUid())) continue;
-                    if(registry.isOnline(uid+"@localhost")){
-                        String id = UUID.randomUUID().toString();
-                        String xml = String.format("""
-                                <message from='%s' to='%s' id='%s'>
-                                  <event xmlns='http://jabber.org/protocol/pubsub#event'>
-                                    <items node='urn:xmpp:profile-metadata'>
-                                      <item id='%s'>
-                                        <profile xmlns='metadata:ns'>
-                                          <bio>Coding late into the night...</bio>
-                                          <theme>dark</theme>
-                                        </profile>
-                                      </item>
-                                    </items>
-                                  </event>
-                                </message>
-                                """, session.getContactId(), uid, id, UUID.randomUUID().toString());
-                        Optional<Session> receiverSession = registry.getByContactId(uid+"@localhost");
-                        receiverSession.get().writeXML(xml);
-                        logger.info("Event sent");
-                    }else{
-                        // TODO: Persist the updates for the user (mailbox) architecture
-                        logger.info("The user is offline, persisting");
-                    }
-                }
-                /*Thread.ofVirtual().start(()->{
-                    List<String> uids = db.getContacts(session.getUid());
-                    if(uids.isEmpty()) return;
-
-                    for(String uid: uids){
-                        if(registry.isOnline(uid)){
-                            // TODO: Send the updates to the user
-                            logger.info("The user is online");
-                        }else{
-                            // TODO: Persist the updates for the user (mailbox) architecture
-                            logger.info("The user is offline, persisting");
-                        }
-                    }
-                });*/
+        if(p.displayName()  != null) {
+            ProfileMutation mutation = ProfileMutation.statusText(p.displayName());
+            try {
+                UpdateService updateService = syncNode.getProfileUpdateService();
+                UpdateService.UpdateResult result = updateService.update(session.getUid(), null, mutation);
+                logger.info("Updated result is: "+result.profile().statusText());
+            } catch (SQLException e) {
+                logger.info("Error occurred updating user display status: "+e.getMessage());
             }
         }
 
         if(p.avatarUrl() != null) {
-            boolean updated = db.changeAvatarUrl(session.getUid(), p.avatarUrl());
-            if(updated){
-                // This should be moved to a background thread
-                List<String> uids = db.getContacts(session.getUid());
-
-                if(uids.isEmpty()) return;
-
-                for(String uid: uids){
-                    if(uid.equals(session.getUid())) continue;
-
-                    if(registry.isOnline(uid+"@localhost")){
-                        String id = UUID.randomUUID().toString();
-                        String xml = String.format("""
-                                <message from='%s' to='%s' id='%s'>
-                                  <event xmlns='http://jabber.org/protocol/pubsub#event'>
-                                    <items node='urn:xmpp:profile-metadata'>
-                                      <item id='current'>
-                                        <profile xmlns='metadata:ns'>
-                                          <avatar_url>%s</avatar_url>
-                                          <theme>dark</theme>
-                                        </profile>
-                                      </item>
-                                    </items>
-                                  </event>
-                                </message>
-                                """, session.getUid(), uid, id, p.avatarUrl());
-                        Optional<Session> receiverSession = registry.getByContactId(uid+"@localhost");
-                        receiverSession.ifPresent(s -> s.writeXML(xml));
-                    }else{
-                        logger.info("Caching the event of profile metadata change");
-                        db.storeMailEvent(session.getUid(), uid, "avatar_url", p.avatarUrl());
-                    }
-                }
+            ProfileMutation mutation = ProfileMutation.statusText(p.avatarUrl());
+            try {
+                UpdateService updateService = syncNode.getProfileUpdateService();
+                UpdateService.UpdateResult result = updateService.update(session.getUid(), null, mutation);
+                logger.info("Updated result is: "+result.profile().statusText());
+            } catch (SQLException e) {
+                logger.info("Error occurred updating user display status: "+e.getMessage());
             }
         }
     }
 
-    private void handleProfileMetadataChange(Session session){
 
+    public void handleGet(StartElement element, XMLEventReader reader, Session session) throws XMLStreamException {
+        logger.info("Handling the profile sync get request ... ");
+        String id = getAttr(element, "id");
+
+        while(reader.hasNext()) {
+            XMLEvent event = reader.nextEvent();
+            try{
+                if(event.isStartElement()){
+                    StartElement se = event.asStartElement();
+                    String name = se.getName().getLocalPart();
+
+                    if("profile-get".equals(name)) {
+                        String uid = getAttr(se, "user");
+
+                        Profile profile = syncNode.getProfileUpdateService().fetchProfile(uid);
+
+                        String xml = String.format("""
+                                <iq type='result' id='%s'>
+                                    <profiles xmlns='%s'>
+                                        <profile user='%s' version='%d' updated='%d'>
+                                            <display-status>%s</display-status>
+                                            <display-name>%s</display-name>
+                                            <username>%s</username>
+                                            <avatar-url>%s</avatar-url>
+                                        </profile>
+                                    </profiles>
+                                """, UUID.randomUUID(), "urn:xmpp:profile-sync:1",
+                                profile.userId(), profile.version(), System.currentTimeMillis(),
+                                profile.statusText(), profile.displayName(), profile.username(),
+                                profile.avatarUrl());
+                        session.writeXML(xml);
+                    }
+
+                    /*if("profile-sync".equals(name)) {
+                        long seq = Long.parseLong(Objects.requireNonNull(getAttr(se, "since")));
+                        logger.info("sync since seq: "+seq);
+                        Set<String> contacts = db.getContactEdges(session.getUid());
+
+                        try{
+                            Connection connection = pool.getConnection();
+                            List<Version>  changed = profileUpdateServices.latestSince(connection, seq, contacts);
+
+                            StringBuilder builder = new StringBuilder(128 + changed.size() * 80);
+                            builder.append(String.format("<message id='%s'>", UUID.randomUUID()))
+                                    .append("<profile-invalidate xmlns='urn:xmpp:profile-sync:1'>");
+                            for(Version v: changed) {
+                                builder.append("<item user=\"").append(escapeXml(v.userId())).append("\" version=\"").append(v.version()).append("\" seq=\"").append(1).append("\"/>");
+                            }
+                            builder.append("</profile-invalidate>");
+                            builder.append("</message>");
+
+                            String xml = builder.toString();
+                            session.writeXML(xml);
+                            connection.commit();
+                        } catch (SQLException e) {
+                            logger.info("Error occurred getting latest version: "+e.getMessage());
+                            throw new RuntimeException(e);
+                        }
+                    }*/
+                }
+            }catch(SQLException exception){
+
+            }
+
+            if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("iq")) {
+                logger.info("End of IQ reached, breaking out of the loop");
+                break;
+            }
+        }
     }
 
     private ParsedProfileMetadata parsedProfileMetadata(XMLEventReader reader){

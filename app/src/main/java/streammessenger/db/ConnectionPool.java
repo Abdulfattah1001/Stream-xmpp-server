@@ -1,7 +1,5 @@
 package streammessenger.db;
 
-import com.zaxxer.hikari.HikariConfig;
-import com.zaxxer.hikari.HikariDataSource;
 
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -14,7 +12,6 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.logging.Logger;
 
 /**
  * Custom JDBC connection pool - no external dependencies.
@@ -27,7 +24,7 @@ import java.util.logging.Logger;
  *   - Background evictor removes connections that have been idle too long
  * <p>
  * This replaces HikariCP with a simpler implementation that covers
- * all the cases we actually need.
+ * all the cases is actually need.
  */
 public final class ConnectionPool {
 
@@ -65,6 +62,7 @@ public final class ConnectionPool {
 
         // Password from environment - never from config object
         String dbPass = System.getenv("DB_PASSWORD");
+
         if (dbPass == null || dbPass.isEmpty()) {
             throw new IllegalStateException(
                     "DB_PASSWORD environment variable not set");
@@ -99,7 +97,7 @@ public final class ConnectionPool {
 
     /**
      * Borrows a connection from the pool.
-     *
+     * <p>
      * Returns immediately if a valid connection is available.
      * Creates a new connection if pool is below max.
      * Blocks up to connectionTimeoutMs if pool is at max.
@@ -166,7 +164,7 @@ public final class ConnectionPool {
 
     /**
      * Returns a connection to the pool.
-     *
+     * <p>
      * This is called automatically when the caller closes the Connection
      * (via try-with-resources). The PooledConnection wrapper intercepts
      * close() and returns it to the pool instead of actually closing it.
@@ -263,7 +261,7 @@ public final class ConnectionPool {
         props.setProperty("user", username);
         props.setProperty("password", new String(password));
 
-        // PostgreSQL specific optimizations
+        // PostgresSQL specific optimizations
         props.setProperty("reWriteBatchedInserts", "true");
         props.setProperty("defaultRowFetchSize", "50");
         props.setProperty("loginTimeout", "10");
@@ -272,6 +270,7 @@ public final class ConnectionPool {
         raw.setAutoCommit(false);
 
         totalConnections.incrementAndGet();
+
         logger.fine("Created connection. Total: " + totalConnections.get());
 
         return new PooledConnection(raw, this);

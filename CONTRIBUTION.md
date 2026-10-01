@@ -76,11 +76,11 @@ The zero-dependency principle is core to this project.
 # 1. Fork the repository on GitHub
 
 # 2. Clone your fork
-git clone https://github.com/YOUR_USERNAME/zeal-xmpp.git
+git clone https://github.com/Abdulfattah1001/StreamServer.git
 cd zeal-xmpp
 
 # 3. Add upstream remote
-git remote add upstream https://github.com/yourusername/zeal-xmpp.git
+git remote add upstream https://github.com/Abdulfattah1001/StreamServer.git
 
 # 4. Set up the database
 createdb zealxmpp_test
@@ -409,7 +409,7 @@ Yes / No / Maybe
 
 **Do NOT open a public issue for security vulnerabilities.**
 
-Email: security@yourdomain.com
+Email: security@omnyrex.com
 
 Include:
 - Description of the vulnerability
@@ -537,7 +537,7 @@ docs/
 
 ## Good First Issues
 
-Look for issues labeled [`good first issue`](https://github.com/yourusername/zeal-xmpp/labels/good%20first%20issue):
+Look for issues labeled [`good first issue`](https://github.com/Abdulfattah1001/StreamServer/labels/good%20first%20issue):
 
 | Issue | Difficulty | Skills Needed |
 |-------|-----------|---------------|
@@ -643,7 +643,7 @@ This Code of Conduct applies within all community spaces:
 Instances of abusive, harassing, or otherwise unacceptable behavior
 may be reported to the maintainers at:
 
-**conduct@yourdomain.com**
+**conduct@omnyrex.com**
 
 All complaints will be reviewed and investigated promptly and fairly.
 All maintainers are obligated to respect the privacy and security

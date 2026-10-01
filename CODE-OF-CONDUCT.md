@@ -1,5 +1,3 @@
----
-
 # CODE_OF_CONDUCT.md
 ```markdown
 # Code of Conduct
@@ -125,4 +123,4 @@ version 2.1.
 ## Questions?
 
 If you have questions about this Code of Conduct, open a
-GitHub Discussion or email conduct@yourdomain.com.
+GitHub Discussion or email conduct@omnyrex.com.

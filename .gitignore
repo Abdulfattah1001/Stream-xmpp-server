@@ -12,6 +12,7 @@ build
 /app/bin/*
 PROMPT2.md
 PROMPT3.md
+OLDREADME.md
 
 # OS files
 .DS_Store

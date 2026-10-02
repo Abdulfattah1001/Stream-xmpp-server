@@ -646,9 +646,7 @@ public final class CallSignalingHandler implements StanzaHandler {
     }
 
     private String twilioTokenGenerator(String uid, String name) {
-        String twilioAccountSid = config.getApnsBundleId();
-        String twilioApiKey = config.getCloudinaryApiKey();
-        String twilioApiSecret = config.getCloudinaryApiSecret();
+
 
         // Required for Video
         String identity = uid;

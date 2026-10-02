@@ -45,6 +45,10 @@ public final class ServerConfig {
     private final String cloudinaryApiKey;
     private final String cloudinaryApiSecret;
 
+    private final String twilioAccountSid;
+    private final String twilioApiKey;
+    private final String twilioApiSecret;
+
     private ServerConfig(Builder b) {
         this.port = b.port;
         this.address = b.address;
@@ -69,6 +73,9 @@ public final class ServerConfig {
         this.cloudinaryCloudname = b.cloudinaryCloudName;
         this.cloudinaryApiKey = b.cloudinaryApiKey;
         this.cloudinaryApiSecret = b.cloudinaryApiSecret;
+        this.twilioAccountSid   = b.twilioAccountSid;
+        this.twilioApiKey = b.twilioApiKey;
+        this.twilioApiSecret = b.twilioApiSecret;
     }
 
     /**
@@ -135,6 +142,9 @@ public final class ServerConfig {
                 .cloudinaryCloudName(props.getProperty("cloudinary_cloudname"))
                 .cloudinaryApiKey(props.getProperty("cloudinary_api_key"))
                 .cloudinaryApiSecret(props.getProperty("cloudinary_api_secret"))
+                .twilioAccountSid(props.getProperty("twilio_sid"))
+                .twilioApiKey(props.getProperty("twilio_key"))
+                .twilioApiSecret(props.getProperty("twilio_secret"))
                 .build();
     }
 
@@ -228,6 +238,9 @@ public final class ServerConfig {
     public String getCloudinaryCloudName() { return cloudinaryCloudname; }
     public String getCloudinaryApiKey()     { return cloudinaryApiKey; }
     public String getCloudinaryApiSecret()  { return cloudinaryApiSecret; }
+    public String getTwilioAccountSid()      { return twilioAccountSid; }
+    public String getTwilioApiKey()         { return twilioApiKey; }
+    public String getTwilioApiSecret()      { return twilioApiSecret; }
 
     // -------------------------------------------------------------------------
     // Builder
@@ -258,6 +271,10 @@ public final class ServerConfig {
         private String cloudinaryApiKey;
         private String cloudinaryApiSecret;
 
+        private String twilioAccountSid;
+        private String twilioApiKey;
+        private String twilioApiSecret;
+
         public Builder port(int v) { this.port = v; return this; }
         public Builder botApiPort(int v) { this.botApiPort = v; return this; }
         public Builder address(String v) { this.address = v; return this; }
@@ -284,6 +301,10 @@ public final class ServerConfig {
         public Builder cloudinaryApiKey(String v)   {  this.cloudinaryApiKey = v; return  this; }
 
         public Builder cloudinaryApiSecret(String v) { this.cloudinaryApiSecret = v; return this; }
+
+        public Builder twilioAccountSid(String v)   { this.twilioAccountSid = v;return this;}
+        public Builder twilioApiKey(String v)   {  this.twilioApiKey = v; return this; }
+        public Builder twilioApiSecret(String v)    { this.twilioApiSecret = v; return this; }
 
         public ServerConfig build() {
             if (sslContext == null) throw new IllegalStateException("SSLContext is required");

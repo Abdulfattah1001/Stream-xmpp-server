@@ -649,7 +649,6 @@ public final class CallSignalingHandler implements StanzaHandler {
 
 
         // Required for Video
-        String identity = uid;
 
         // Create Video grant
         VideoGrant grant = new VideoGrant().setRoom(name);
@@ -659,7 +658,7 @@ public final class CallSignalingHandler implements StanzaHandler {
                 twilioAccountSid,
                 twilioApiKey,
                 twilioApiSecret.getBytes(StandardCharsets.UTF_8)
-        ).identity(identity).grant(grant).build();
+        ).identity(uid).grant(grant).build();
 
         System.out.println(token.toJwt());
 

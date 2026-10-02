@@ -295,7 +295,7 @@ public class Server {
         // Bot API
         this.botApiHandler = new BotApiHandler(
                 config.getBotApiPort(),
-                connectionPool, db, registry);
+                connectionPool, db, registry, config);
 
         // Verified accounts
         this.verifiedHandler = new VerifiedAccountHandler(

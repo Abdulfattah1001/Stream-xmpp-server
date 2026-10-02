@@ -263,7 +263,7 @@ public final class AuthController {
                     "session_token": "%s",
                     "jid":           "%s",
                     "user_id":       "%s",
-                    "display_name":  "%s",
+                    "display_name":  "%s"
                 }
                 """,
                 token.rawToken(),

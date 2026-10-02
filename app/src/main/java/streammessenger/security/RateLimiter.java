@@ -7,19 +7,19 @@ import java.util.logging.Logger;
 
 /**
  * Token bucket rate limiter - no external dependencies.
- *
+ * <p>
  * Limits:
  *   Per IP:      Max connections per minute
  *   Per Session: Max stanzas per second (prevents message flooding)
  *   Per Account: Max messages per day (prevents spam)
  *   Global:      Max new connections per second
- *
+ * <p>
  * Token Bucket Algorithm:
  *   Each bucket has N tokens.
  *   Each request consumes 1 token.
  *   Tokens refill at a fixed rate.
  *   When empty: requests are rejected.
- *
+ * <p>
  * Why token bucket vs leaky bucket:
  *   - Allows bursting (sending 10 messages quickly then pausing)
  *   - More natural for chat apps

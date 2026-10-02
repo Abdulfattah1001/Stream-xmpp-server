@@ -1,14 +1,8 @@
 package streammessenger;
 
-import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.util.Map;
 import java.util.logging.Logger;
 
-
-import streammessenger.api.CloudinarySlotManager;
-import streammessenger.auth.FirebaseSetup;
 import streammessenger.config.ServerConfig;
 
 import java.util.logging.*;
@@ -25,10 +19,6 @@ public final class App {
 
     public static void main(String[] args) {
         Logger logger = Logger.getLogger(App.class.getName());
-        try{ FirebaseSetup.setup(); } catch (IOException e) {
-            System.err.println("[FATAL] Firebase Setup error: "+e.getMessage());
-            System.exit(1);
-        }
         configureLogging();
 
         String configPath = args.length > 0 ? args[0] : "config.properties";

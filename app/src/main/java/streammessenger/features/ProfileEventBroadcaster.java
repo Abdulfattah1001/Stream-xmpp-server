@@ -14,18 +14,18 @@ import streammessenger.session.SessionRegistry;
 
 /**
  * Broadcasts profile updates to all "interested parties":
- *
+ * <p>
  *   - User's roster contacts
  *   - All members of groups the user is in
- *
+ * <p>
  * Uses a publish/subscribe model:
  *   When user A updates their profile:
  *     1. Server collects all JIDs that should be notified
  *     2. For each online session: send a profile update stanza
  *     3. For offline sessions: queue notification (delivered on reconnect)
- *
+ * <p>
  * This eliminates the need for clients to poll for profile changes.
- *
+ * <p>
  * Custom namespace: urn:xmpp:profile:0
  */
 public final class ProfileEventBroadcaster {

@@ -10,6 +10,7 @@ import java.security.SecureRandom;
 import java.sql.*;
 import java.util.logging.Logger;
 
+import streammessenger.config.ServerConfig;
 import streammessenger.db.ConnectionPool;
 import streammessenger.db.DatabaseManager;
 import streammessenger.session.Session;
@@ -26,7 +27,7 @@ import streammessenger.session.SessionRegistry;
  *   - Post blog articles automatically
  *   - Broadcast announcements to groups
  * <p>
- * Think: Telegram Bot API, Slack App API, but for your server.
+ * Think: Telegram Bot API, Slack App API, but for omnyrex.
  * <p>
  * BOT CREATION FLOW:
  * ──────────────────
@@ -64,14 +65,16 @@ public final class BotApiHandler {
     private final DatabaseManager db;
     private final SessionRegistry registry;
     private final HttpServer httpServer;
+    private final ServerConfig config;
 
     public BotApiHandler(int port,
                           ConnectionPool pool,
                           DatabaseManager db,
-                          SessionRegistry registry) throws IOException {
+                          SessionRegistry registry,
+                         ServerConfig config) throws IOException {
         this.pool     = pool;
         this.db       = db;
-        this.registry = registry;
+        this.registry = registry; this.config = config;
 
         this.httpServer = HttpServer.create(
                 new InetSocketAddress(port), 50);
@@ -152,8 +155,7 @@ public final class BotApiHandler {
             }
 
             String botId    = "bot_" + generateHex(4);
-            String jid      = botName + "@"
-                    + System.getProperty("xmpp.domain", "localhost");
+            String jid      = botName + "@" + config.getDomainName();
             String apiKey   = "bk_" + generateHex(16);
             String apiSecret = "bs_" + generateHex(16);
 
@@ -484,6 +486,7 @@ public final class BotApiHandler {
         String signature = hmacSha256(bot.webhookSecret(), payload);
 
         // POST to webhook asynchronously
+        // TODO: Creating a thread asynchronously is a bad design, it should be consolidated
         java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()
                 .execute(() -> {
                     try {

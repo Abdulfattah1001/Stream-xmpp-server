@@ -142,8 +142,6 @@ public final class DatabaseManager {
             logger.warning("Phone number already registered: "
                     + "existing userId=" + byPhone.userId()
                     + " new firebaseUid=" + firebaseUid);
-
-            updateFirebaseUid(byPhone.userId(), firebaseUid);
             return byPhone;
         }
 
@@ -638,7 +636,7 @@ public final class DatabaseManager {
             stmt.setString(4, creatorId);
 
             int result = stmt.executeUpdate();
-        }catch(SQLException exception){}
+        }catch(SQLException ignore){}
     }
     // =========================================================================
     // Session Tokens

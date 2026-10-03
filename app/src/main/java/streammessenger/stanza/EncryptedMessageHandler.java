@@ -142,7 +142,6 @@ public final class EncryptedMessageHandler implements StanzaHandler {
             return;
         }
 
-
         try{
             XMLEvent event = reader.peek();
             if(event.isStartElement()){
@@ -197,7 +196,7 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                                      String toContactId,
                                      String type,
                                      String messageId) {
-        logger.info("The sender of the message is: "+sender.getUid() + " and his resource is " + sender.getResource() + " and the receiver is: "+toContactId);
+        logger.info("The sender of the message is: "+sender.getUid() + " and the receiver is: "+toContactId);
         // Check the message keys
         /*TODO: To  be uncomment later String identityKey = parsed.identityKey();
         Optional<String> key = db.getIdentityKey(toContactId);
@@ -272,8 +271,16 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                 RECEIPTS_NS,
                 escapeXml(parsed.receiptId())
         );
+        registry.getByUserId(toContactId).ifPresentOrElse(s ->{
+            if(s.isAuthenticated()) {
+                boolean sent = s.writeXML(receiptXml);
+                if(!sent) {
+                    db.storeReceipt(sender.getUid(), toContactId, parsed.receiptId, parsed.receiptType);
+                }
+            }
+        }, () -> db.storeReceipt(sender.getUid(), toContactId, parsed.receiptId, parsed.receiptType));
 
-        registry.getByContactId(toContactId.split("@")[0]+"@localhost").ifPresentOrElse(s -> {
+        /*registry.getByContactId(toContactId.split("@")[0]+"@localhost").ifPresentOrElse(s -> {
             if (s.isAuthenticated()) {
                 boolean sent =  s.writeXML(receiptXml);
                 // If the user is online, but couldn't sent
@@ -288,7 +295,7 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                     parsed.receiptId,
                     parsed.receiptType
             );
-        });
+        });*/
 
     }
 
@@ -311,9 +318,13 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                 CHAT_NS
         );
 
-        registry.getByContactId(toContactId).ifPresent(s -> {
-            if (s.isAuthenticated()) s.writeXML(stanza);
+        registry.getByUserId(toContactId).ifPresent(s -> {
+            if(s.isAuthenticated()) s.writeXML(stanza);
         });
+
+        /*registry.getByContactId(toContactId).ifPresent(s -> {
+            if (s.isAuthenticated()) s.writeXML(stanza);
+        });*/
     }
 
     // =========================================================================

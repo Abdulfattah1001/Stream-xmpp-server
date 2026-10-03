@@ -65,6 +65,35 @@ import streammessenger.session.SessionRegistry;
  *   <message id='read-uuid' to='sender@domain.com'>
  *     <displayed xmlns='urn:xmpp:receipts' id='m1'/>
  *   </message>
+ *
+ *   <p>
+ * Destructive messages types
+ *      <message id='read-uuid' to='sender@domain.com'>
+ *         <descructive>message content</descructive>
+ *      </message>
+ * <p>
+ * Last message correct
+ *      <message id='read-uuid' to='sender@domain.com'>
+ *          <encrypted>
+ *              <body></body>
+ *          </encrypted>
+ *          <replace id='prev-read-uuid' xmlns='urn:xmpp:message-correct:0'/>
+ *      </message>
+ *  Reply to a message
+ *      <message id='read-uuid' to='sender@domain.com'>
+ *           <encrypted>
+ *               <body></body>
+ *               <reply to='@sender@domain.com' id='read-uuid' xmlns='urn:xmpp:reply:0'/>
+ *           </encrypted>
+ *      </message>
+ *   <p>
+ *   <b>Support for ADVANCE MESSAGE PROCESSING XEP 0079</b>
+ *   <i>A protocol that enables an end-to-end entity to specify additional
+ *   sematics for XMPP <message/> stanza. This protocol is typically used by client to inform
+ *   the receiving server or client how to deliver or render s particular stanza,
+ *   such as providing an expiratioin time or resource-matching strategy
+ *   </i>
+ * @{@link <a href="https://xmpp.org/extensions/xep-0079.html">Advanced Message Processing</a>}
  */
 public final class EncryptedMessageHandler implements StanzaHandler {
 
@@ -74,6 +103,8 @@ public final class EncryptedMessageHandler implements StanzaHandler {
     private static final String RECEIPTS_NS = "urn:xmpp:receipts";
     private static final String SERVER_RECEIPT_NS = "urn:xmpp:server:receipts";
     private static final String CHAT_NS     = "http://jabber.org/protocol/chatstates";
+    private static final String MESSAGE_CORRECTION = "urn:xmpp:message-correct:0";
+    private static final String REPLY_NS = "urn:xmpp:reply:0";
 
     private final SessionRegistry registry;
     private final DatabaseManager db;

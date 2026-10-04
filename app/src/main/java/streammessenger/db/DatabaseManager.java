@@ -2668,7 +2668,6 @@ public final class DatabaseManager {
      * that's likely the user's primary device.
      */
     public PushTarget getPushTarget(String userId) {
-
         String sql = """
             SELECT
                 dv.push_token,
@@ -2678,14 +2677,12 @@ public final class DatabaseManager {
             FROM devices dv
             INNER JOIN users u ON u.user_id = dv.user_id
             WHERE dv.user_id    = ?
-             
               AND dv.push_token IS NOT NULL
               AND u.active = true
               AND u.deleted_at IS NULL
             ORDER BY dv.last_seen_at DESC
             LIMIT 1
             """;
-
         try (Connection conn = pool.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
 

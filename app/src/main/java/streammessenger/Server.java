@@ -244,7 +244,6 @@ public class Server {
         // Push notifications
         this.pushService = new PushNotificationService(
                 config.getFcmProjectId(),
-                config.getFcmServiceAccountJson(),
                 config.getApnsBundleId(),
                 config.isDev(),
                 db
@@ -254,10 +253,6 @@ public class Server {
         this.callHandler = new CallSignalingHandler(
                 connectionPool, registry, pushService, config);
 
-        /*this.syncWorker = new SyncWorker(registry, metrics, new SyncChangeLog(connectionPool, new CounterRowSequencer()),
-                profileDatabaseManager);
-
-        this.updateServices = new ProfileUpdateServices(profileDatabaseManager, syncWorker::hint);*/
         this.syncNode = new SyncNode(connectionPool,  config, metrics, registry, new SyncChangeLog(connectionPool,  new CounterRowSequencer()), new ProfileStore());
 
         this.streamProcessor = new XMPPStreamProcessor(

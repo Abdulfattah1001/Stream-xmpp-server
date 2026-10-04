@@ -77,12 +77,10 @@ public final class PushNotificationService {
     private static PushNotificationService instance = null;
 
     public PushNotificationService(String fcmProjectId,
-                                    String fcmServiceAccountJson,
                                     String apnsBundleId,
                                     boolean isDev,
                                     DatabaseManager db) {
         this.fcmProjectId          = fcmProjectId;
-        //this.fcmServiceAccountJson = fcmServiceAccountJson;
         this.apnsBundleId          = apnsBundleId;
         this.isDev                 = isDev;
         this.db                    = db;
@@ -146,9 +144,6 @@ public final class PushNotificationService {
                                          String callerDisplayName,
                                          String callType,
                                          String callId){
-
-        logger.info("Sending a push notification to the callee");
-
         executor.execute(() -> {
 
             DatabaseManager.PushTarget target = db.getPushTarget(toUserId);

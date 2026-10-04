@@ -646,11 +646,10 @@ public final class CallSignalingHandler implements StanzaHandler {
     }
 
     private String twilioTokenGenerator(String uid, String name) {
+        // Required for Video
         String twilioAccountSid = config.getTwilioAccountSid();
         String twilioApiKey = config.getTwilioApiKey();
         String twilioApiSecret = config.getTwilioApiSecret();
-
-        // Required for Video
 
         // Create Video grant
         VideoGrant grant = new VideoGrant().setRoom(name);

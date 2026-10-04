@@ -4,6 +4,7 @@ package streammessenger;
 import java.util.logging.Logger;
 
 import streammessenger.config.ServerConfig;
+import streammessenger.db.DatabaseMigrator;
 
 import java.util.logging.*;
 
@@ -27,6 +28,8 @@ public final class App {
 
         try {
             ServerConfig config = ServerConfig.load(configPath);
+
+            DatabaseMigrator.migrate(config);
 
             Server server = new Server.Builder()
                     .setPort(config.getPort())

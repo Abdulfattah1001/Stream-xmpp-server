@@ -6,9 +6,10 @@
  */
 
 plugins {
+    java
     application
+    id("com.github.johnrengelman.shadow") version "8.1.1"
 }
-
 repositories {
     // Use Maven Central for resolving dependencies.
     mavenCentral()
@@ -39,6 +40,12 @@ dependencies {
 
     implementation("com.cloudinary:cloudinary-http5:2.3.2")
     implementation("com.github.f4b6a3:ulid-creator:5.2.4")
+
+    // Flyway Core
+    //implementation ("org.flywaydb:flyway-core:10.10.0")
+    //implementation("org.flywaydb:flyway-database-mysql:10.10.0")
+    implementation("org.flywaydb:flyway-mysql:10.10.0")
+    implementation("org.flywaydb:flyway-core:13.9.0")
 
     compileOnly("io.lettuce:lettuce-core:6.7.1.RELEASE")
 }

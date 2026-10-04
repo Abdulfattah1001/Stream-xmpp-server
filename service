@@ -1,0 +1,44 @@
+[Unit]
+Description=OmnyrexMessenger Java IM Server
+After=network.target remote-fs.target syslog.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=root
+Group=omnyrex
+#WorkingDirectory=/opt/omnyrex
+WorkingDirectory=/root/xmpp
+
+# Load secret environment variables (DB_PASSWORD, KEYSTORE_PASSWORD, KEY_PASSWORD, etc.)
+EnvironmentFile=/etc/omnyrex/env.conf
+
+# Java Execution Command
+ExecStart=/usr/bin/java \
+    -server \
+    -Xms1g \
+    -Xmx2g \
+    -XX:+UseG1GC \
+    -XX:MaxGCPauseMillis=100 \
+    -XX:+UseStringDeduplication \
+    -Dfile.encoding=UTF-8 \
+    -jar /opt/omnyrex/omnyrex-server.jar
+
+# Auto-restart policy
+Restart=always
+RestartSec=5s
+
+# File descriptor limits for high concurrent TCP connections (XMPP / WebSockets)
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Security & Process Sandboxing
+ProtectSystem=full
+ProtectHome=true
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+DevicePolicy=closed
+
+[Install]
+WantedBy=multi-user.target

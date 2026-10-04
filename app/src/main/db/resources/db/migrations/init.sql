@@ -1,3 +1,7 @@
+--- =====================================================================
+--  XMPP USERS TABLES
+--- ===================================================================
+
 CREATE TABLE users (
   id BIGINT NOT NULL AUTO_INCREMENT,
   user_id VARCHAR(32) NOT NULL,
@@ -26,6 +30,11 @@ CREATE TABLE users (
 ) ENGINE=InnoDB AUTO_INCREMENT=36 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
+CREATE INDEX idx_users_firebase_uid ON users(firebase_uid);
+CREATE INDEX idx_users_phone_hash ON users(phone_number_hash);
+CREATE INDEX idx_users_jid ON users(jid);
+CREATE INDEX idx_users_active ON users(active);
+
 
 CREATE TABLE contact_edges (
   owner_user_id CHAR(14) NOT NULL,
@@ -46,6 +55,14 @@ CREATE TABLE contact_discovery (
   KEY idx_discovery_user (user_id),
   CONSTRAINT fk_discovery_user FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+
+-- ============================================================================
+-- SESSION TOKENS
+-- Replaces passwords entirely.
+-- A session token is issued after Firebase auth verification.
+-- Used for XMPP SASL authentication instead of a password.
+-- ============================================================================
 
 
 CREATE TABLE session_tokens (
@@ -73,7 +90,91 @@ CREATE TABLE session_tokens (
   CONSTRAINT `fk_session_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB AUTO_INCREMENT=36 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 
+CREATE INDEX idx_session_tokens_user_id  ON session_tokens(user_id);
+CREATE INDEX idx_session_tokens_hash ON session_tokens(token_hash);
+CREATE INDEX idx_session_tokens_expires ON session_tokens(expires_at, revoked_at);
+CREATE INDEX idx_session_tokens_push ON session_tokens(push_token, revoked_at);
 
+-- ============================================================================
+-- STREAM MANAGEMENT SESSIONS (XEP-0198)
+-- ============================================================================
+CREATE TABLE sm_sessions (
+    sm_id               VARCHAR(64) PRIMARY KEY,
+    user_id             VARCHAR(32) NOT NULL,
+    unacked_stanzas     JSON,
+    client_acked        BIGINT NOT NULL DEFAULT 0,
+    server_sent         BIGINT NOT NULL DEFAULT 0,
+    expires_at          TIMESTAMP NOT NULL,
+    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_sm_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+-- ============================================================================
+-- MESSAGE ARCHIVE (XEP-0313 - optional but useful)
+-- ============================================================================
+
+CREATE TABLE message_archive (
+    id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
+    archive_id          CHAR(36) NOT NULL UNIQUE DEFAULT (UUID()),
+    owner_user_id       VARCHAR(32) NOT NULL,
+    from_jid            VARCHAR(255) NOT NULL,
+    to_jid              VARCHAR(255) NOT NULL,
+    stanza_id           VARCHAR(255),
+    body                TEXT,
+    stanza_xml          TEXT NOT NULL,
+    timestamp           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_archive_owner FOREIGN KEY (owner_user_id) REFERENCES users(user_id)
+);
+CREATE INDEX idx_archive_owner ON message_archive(owner_user_id, timestamp);
+CREATE INDEX idx_archive_stanza_id ON message_archive(stanza_id);
+
+
+-- Privacy settings
+CREATE TABLE user_privacy (
+    user_id VARCHAR(32) PRIMARY KEY,
+
+    -- everyone | contacts | nobody
+    last_seen_visibility VARCHAR(20) NOT NULL DEFAULT 'contacts',
+
+    -- everyone | contacts | nobody
+    photo_visibility VARCHAR(20) NOT NULL DEFAULT 'contacts',
+
+    -- everyone | contacts | nobody
+    about_visibility VARCHAR(20) NOT NULL DEFAULT 'contacts',
+
+    -- true = enabled, false = disabled
+    read_receipts_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_user_privacy_user
+        FOREIGN KEY (user_id)
+        REFERENCES users(user_id)
+);
+
+-- ============================================================================
+-- AUDIT LOG
+-- ============================================================================
+
+CREATE TABLE audit_log (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    event_type      VARCHAR(64) NOT NULL,
+    user_id         VARCHAR(32),
+    details         JSON,
+    ip_address      VARCHAR(45),
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_audit_user FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
+CREATE INDEX idx_audit_user ON audit_log(user_id, created_at);
+CREATE INDEX idx_audit_type ON audit_log(event_type, created_at);
+
+
+
+-- ============================================================================
+-- DEVICE REGISTRY
+-- Tracks all devices a user has ever logged in from
+-- ============================================================================
 CREATE TABLE `devices` (
   `id` BIGINT unsigned NOT NULL AUTO_INCREMENT,
   `user_id` CHAR(32) NOT NULL,
@@ -137,6 +238,7 @@ CREATE TABLE `pending_receipts` (
   KEY `idx_pending_receipts_user` (`to_uid`),
   CONSTRAINT `pending_receipts_ibfk_1` FOREIGN KEY (`to_uid`) REFERENCES `users` (`user_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=82 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+CREATE INDEX idx_pending_receipts_user ON pending_receipts(to_uid);
 
 
 CREATE TABLE `profile_change_seq` (
@@ -159,6 +261,12 @@ CREATE TABLE `changes` (
   PRIMARY KEY (`seq`),
   UNIQUE KEY `changes_user_version` (`user_id`,`version`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- ============================================================================
+-- DEVICE KEYS (for multi-device E2E encryption)
+-- Each device has its own encryption keys
+-- Signal Protocol: one key bundle per device
+-- ============================================================================
 
 CREATE TABLE `signal_one_time_keys` (
   `id` BIGINT NOT NULL AUTO_INCREMENT,

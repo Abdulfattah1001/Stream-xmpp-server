@@ -76,7 +76,6 @@ public class PubSubHandler implements StanzaHandler {
             try {
                 UpdateService updateService = syncNode.getProfileUpdateService();
                 UpdateService.UpdateResult result = updateService.update(session.getUid(), null, mutation);
-                logger.info("Updated result is: "+result.profile().statusText());
             } catch (SQLException e) {
                 logger.info("Error occurred updating user display status: "+e.getMessage());
             }
@@ -87,7 +86,7 @@ public class PubSubHandler implements StanzaHandler {
             try {
                 UpdateService updateService = syncNode.getProfileUpdateService();
                 UpdateService.UpdateResult result = updateService.update(session.getUid(), null, mutation);
-                logger.info("Updated result is: "+result.profile().statusText());
+                logger.info("Successfully updated the avatar url: "+result.profile().avatarUrl());
             } catch (SQLException e) {
                 logger.info("Error occurred updating user display status: "+e.getMessage());
             }
@@ -96,7 +95,6 @@ public class PubSubHandler implements StanzaHandler {
 
 
     public void handleGet(StartElement element, XMLEventReader reader, Session session) throws XMLStreamException {
-        logger.info("Handling the profile sync get request ... ");
         String id = getAttr(element, "id");
 
         while(reader.hasNext()) {
@@ -108,10 +106,17 @@ public class PubSubHandler implements StanzaHandler {
 
                     if("profile-get".equals(name)) {
                         String uid = getAttr(se, "user");
-
+                        int have = Integer.parseInt(Objects.requireNonNull(getAttr(se, "have")));
+                        logger.info("The version have is: "+have);
                         Profile profile = syncNode.getProfileUpdateService().fetchProfile(uid);
-
-                        String xml = String.format("""
+                        // If the version fetched is less than or equal to the client
+                        // version, then the server is behind, so no get is done
+                        // TODO: To be extended for list of users later
+                        if(profile.version() <= have) {
+                            logger.info("Version has changed");
+                        } else {
+                            // TODO: To be refined later into StringBuilder to prevent sending a null values to the client
+                            String xml = String.format("""
                                 <iq type='result' id='%s'>
                                     <profiles xmlns='%s'>
                                         <profile user='%s' version='%d' updated='%d'>
@@ -122,10 +127,11 @@ public class PubSubHandler implements StanzaHandler {
                                         </profile>
                                     </profiles>
                                 """, UUID.randomUUID(), "urn:xmpp:profile-sync:1",
-                                profile.userId(), profile.version(), System.currentTimeMillis(),
-                                profile.statusText(), profile.displayName(), profile.username(),
-                                profile.avatarUrl());
-                        session.writeXML(xml);
+                                    profile.userId(), profile.version(), System.currentTimeMillis(),
+                                    profile.statusText(), profile.displayName(), profile.username(),
+                                    profile.avatarUrl());
+                            session.writeXML(xml);
+                        }
                     }
 
                     /*if("profile-sync".equals(name)) {
@@ -156,11 +162,10 @@ public class PubSubHandler implements StanzaHandler {
                     }*/
                 }
             }catch(SQLException exception){
-
+                logger.info("Exceptioin occured: handleGet "+exception.getMessage());
             }
 
             if(event.isEndElement() && event.asEndElement().getName().getLocalPart().equals("iq")) {
-                logger.info("End of IQ reached, breaking out of the loop");
                 break;
             }
         }

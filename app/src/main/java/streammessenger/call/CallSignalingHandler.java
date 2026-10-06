@@ -439,17 +439,6 @@ public final class CallSignalingHandler implements StanzaHandler {
             "<iq type='result' id='%s'/>", escapeXml(iqId)));
 
         // Notify caller
-        /*registry.getByContactId(state.callerJid())
-                .filter(Session::isAuthenticated)
-                .ifPresent(s -> s.writeXML(String.format(
-                    "<message from='%s'>" +
-                    "<call xmlns='%s' action='declined'>" +
-                    "<call_id>%s</call_id>" +
-                    "</call></message>",
-                    escapeXml(calleeSession.getContactId()),
-                    CALL_NS, req.callId()
-                )));*/
-
         Optional<Session> caller = registry.getByUserId(state.callerId());
         caller.ifPresent(session -> session.writeXML(String.format(
                 "<message from='%s' id='%s' to='%s'>" +

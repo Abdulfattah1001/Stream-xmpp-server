@@ -28,6 +28,7 @@ import streammessenger.features.CollaborativeNoteHandler;
 import streammessenger.group.handler.GroupStanzaHandler;
 import streammessenger.metrics.ServerMetrics;
 import streammessenger.mutlidevice.MultiDeviceMessageHandler;
+import streammessenger.repository.MessageRepository;
 import streammessenger.roster.RosterManager;
 import streammessenger.session.Session;
 import streammessenger.session.SessionRegistry;
@@ -103,7 +104,7 @@ public final class XMPPStreamProcessor {
         this.multiDeviceHandler = multiDeviceMessageHandler;
 
         this.mucDomain = "conference"+config.getDomainName();
-        EncryptedMessageHandler encryptedMessageHandler = new EncryptedMessageHandler(registry, db, metrics, reactionHandler, crdtNoteHandler);
+        EncryptedMessageHandler encryptedMessageHandler = new EncryptedMessageHandler(registry, db, metrics, reactionHandler, crdtNoteHandler, new MessageRepository(pool));
 
         // Build handler registry - one instance per handler, shared across all connections
         this.handlers = new HashMap<>();

@@ -80,7 +80,7 @@ public final class ReactionHandler implements StanzaHandler {
     public void handle(StartElement element,
                         XMLEventReader reader,
                         Session session) {
-
+        logger.info("Handling reactions");
         if (!session.isAuthenticated()) {
             consumeElement(reader);
             return;

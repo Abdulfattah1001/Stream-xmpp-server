@@ -29,7 +29,7 @@ public final class App {
         try {
             ServerConfig config = ServerConfig.load(configPath);
 
-            DatabaseMigrator.migrate(config);
+            //DatabaseMigrator.migrate(config);
 
             Server server = new Server.Builder()
                     .setPort(config.getPort())

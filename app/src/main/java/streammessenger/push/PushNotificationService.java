@@ -12,6 +12,7 @@ import java.util.Base64;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
 
+import streammessenger.config.ServerConfig;
 import streammessenger.db.DatabaseManager;
 
 /**
@@ -50,14 +51,9 @@ public final class PushNotificationService {
     private static final String APNS_SANDBOX_URL =
             "https://api.sandbox.push.apple.com/3/device/%s";
 
-    //TODO: This should be hidden
-    private final String PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC251yyFa56j8Uu\nZBYCMd5WvyuMa2rPVj614Ynbk2tHj8+HW8tQ+ZaBgK4IrhO7v4p/oMDIS3+knKE0\n49jZaTy49Pp09GPIdcO7rB0VhObvAShcvlqUR/dYBD66TwJC3z1fcQiECzeJ+ClA\noygBdiLrf4n+hywl4Sk01Odt00K5VVYwEhDuSocbY+AuYUxJEVWJnXSKodTND66Y\njegQBDU8pBONvdSXjRx/09sFV034QfYMPYatvjiGm19D3sTUHFEvH1Hkod2H8u21\nu+/wV6gDXMhiOsq7Et9VJme+rBa9pqxXR8XkCjYkf5u1YWyrQ9PCvqfFEDyCjY/T\nPEhVYaRPAgMBAAECggEAVJSwKpBZM8c5bYcOIGy0P1Q/TLu91GyzKkPGjvpgsWKh\nGxzJbERHI9MAZ/YsHPXqE7Qggl9bgyGFcOJuvLdsQ7HSAnSjkidXYPmqJ3HioyLb\naewDEjAngxXPdjOkPY1jobexMvLG97ABT6lDjk11v4amp0QWF9xERHCyJvj7kZ1L\nIxbBsBezIn5E7aLagYZ4nD7U9CCSmAoyuO9jk4KNpgwpPXvRFpCGVirLCr5Xgog6\n164rOsgKTl1kCigh1PKOVV7siXd1rm6pkqpll9ZKSrwq68JTOpACTV/NNnwXPGSb\ni0mHZJ6tnXyFVt/bDe/2TVaDWl8gZku4p7QSBczjqQKBgQDhtV1DWqJssmyyi8bR\nQVX5DnQ8XgGyKcM81P1EdF0gT+Q42zAr/EMdCuBL3ZkCrvwYGiLl+w/y+YQmXtmP\njSm+0oBQbwkoSxF+3NdUWHUKK/jhQueVl/FrHTLMBIRyRuBTHgjyrghBeekr+ZEm\n7uAZ5ZF0tK4HZIadOAAwrju4WQKBgQDPc1zKgwRWr7kRYXHjHZWk5DaI1MayyAUF\nw2UmQlY88iyNcI94S3fF72YDxTwqWAchxZ0HkPzLaGhmJ0XwFSUQ0qy3TLAELAnd\nW2Q3BV0tfcwQ6z0RaEAwjOTiZ8F2Bss27OI0vk3b2PtYn5phhRqEjnKSxin4FXtg\ntboZXmcs5wKBgGL66f9Ti88nH8vcyD+T62PhFtAyWYQMFHZk4PxYG07EOk1EsgdY\nBQaDcoFSmHs4yYy4SX2ZcBEZov5Ash/lw9zO6z5asyVcZjvAFR4D/K+NQQNoF67e\nhxx2HYSipoKG2nEYxsvFzhEIqVyDgUgVkWlJ51PKuFa9mtrvaAXxIndhAoGAVI3Y\nzFIKeqq06/ijysZMMCE0eSEAu+363hZ+K9HuBHlQ33V5hLZ94xdopTDHDRtEDOfW\n0TavUtkDdF+difWUXf8AltWTCKBKhQazGhn9mIUln9/BzE6Jm0BSKlXP7KNoQMLc\nkFLguTL/f2fOLOFrpYvJ9zj98jgPSaPIbn6j3xECgYEAwSwOeCsj6oj0pGNyjT6M\n6KNZJtrI0V0auQHOHcJXylmt3lUyODRVxi6xN0I55L5H1MK11IQu8S3yKkGa/2lm\nQ6WAw4PbKpwEg1YFrDwq0Wnraz0UXXFehdD6aDp6s+FasP+AMRl8LHyhCPu2jVd1\ngxgU60W2n/XzBW3F5iByE0s=\n-----END PRIVATE KEY-----\n";
-
-    //TODO: This should be hidden
-    private final String CLIENT_EMAIL = "firebase-adminsdk-x7ial@stream-6fa32.iam.gserviceaccount.com";
-
+    private final String PRIVATE_KEY;
+    private final String CLIENT_EMAIL;
     private final String fcmProjectId;
-    //private final String fcmServiceAccountJson; // OAuth2 access token source
     private final String apnsBundleId;
     private final boolean isDev;
     private final DatabaseManager db;
@@ -75,15 +71,20 @@ public final class PushNotificationService {
     private volatile long fcmTokenExpiresAt = 0;
 
     private static PushNotificationService instance = null;
+    private final ServerConfig config;
 
     public PushNotificationService(String fcmProjectId,
-                                    String apnsBundleId,
-                                    boolean isDev,
-                                    DatabaseManager db) {
+                                   String apnsBundleId,
+                                   boolean isDev,
+                                   DatabaseManager db, ServerConfig config) {
         this.fcmProjectId          = fcmProjectId;
         this.apnsBundleId          = apnsBundleId;
         this.isDev                 = isDev;
         this.db                    = db;
+        this.config = config;
+        this.PRIVATE_KEY = new String(Base64.getDecoder().decode(config.getPrivateKey()), StandardCharsets.UTF_8);
+        this.CLIENT_EMAIL = config.getClientEmail();
+
     }
 
     public static PushNotificationService getInstance() {
@@ -246,11 +247,6 @@ public final class PushNotificationService {
             logger.warning("Push failed for userId=" + toUserId + ": " + e.getMessage());
         }
 
-        // Log the attempt
-        /*db.logPushNotification(toUserId, target.pushToken(),
-                target.platform(), type, referenceId,
-                success, errorCode, idempotencyKey);*/
-
         if (!success && "TOKEN_EXPIRED".equals(errorCode)) {
             // Token is invalid - clear it so we stop trying
             db.clearPushToken(toUserId, target.pushToken());
@@ -271,7 +267,7 @@ public final class PushNotificationService {
         String url = String.format(FCM_URL, fcmProjectId);
 
         // Build FCM v1 payload
-        String payloadOld = String.format("""
+        String payload = String.format("""
             {
               "message": {
                 "token": "%s",
@@ -281,7 +277,8 @@ public final class PushNotificationService {
                 },
                 "data": {
                   "type": "%s",
-                  "reference_id": "%s"
+                  "reference_id": "%s",
+                  encrypted_content: "",
                 },
                 "android": {
                   "priority": "HIGH",
@@ -300,15 +297,13 @@ public final class PushNotificationService {
                 referenceId != null ? referenceId : ""
         );
 
-        String payload = String.format("""
+        /**String payload = String.format("""
                         {
                           "message": {
                             "token": "%s",
                             "data": {
                               "type": "%s",
                               "uid": "%s",
-                              "info": "{\\"displayName\\":\\"Abdulfattah Ameen\\",\\"displayStatus\\":\\"If not me, then who?\\"}",
-                              "reference_id": "%s",
                               "sessionId": "%s"
                             },
                             "android": {
@@ -322,7 +317,7 @@ public final class PushNotificationService {
                 "u_c8705362",
                 referenceId != null ? referenceId : "",
                 referenceId != null ? referenceId : ""
-        );
+        );*/
 
         return postJson(url, payload,
                 "Authorization", "Bearer " + accessToken);

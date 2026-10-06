@@ -9,10 +9,14 @@ import javax.xml.stream.events.XMLEvent;
 
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.logging.Logger;
 
 import streammessenger.db.DatabaseManager;
 import streammessenger.metrics.ServerMetrics;
+import streammessenger.push.PushNotificationService;
+import streammessenger.repository.MessageRepository;
 import streammessenger.session.Session;
 import streammessenger.session.SessionRegistry;
 
@@ -91,35 +95,66 @@ import streammessenger.session.SessionRegistry;
  *   <i>A protocol that enables an end-to-end entity to specify additional
  *   sematics for XMPP <message/> stanza. This protocol is typically used by client to inform
  *   the receiving server or client how to deliver or render s particular stanza,
- *   such as providing an expiratioin time or resource-matching strategy
+ *   such as providing an expiration time or resource-matching strategy
  *   </i>
  * @{@link <a href="https://xmpp.org/extensions/xep-0079.html">Advanced Message Processing</a>}
+ * <p>
+ * <b>XEP-0482  Call Invites</b>
+ * <p>
+ * <message from='sender@domain.com' to='receiver@domain.com' id='read-uuid' type='chat'>
+ *     <invite video='true' xmlns='urn:xmpp:call-invites:0'>
+ *         <jingle sid='sids'/>
+ *     </invite>
+ * </message>
+ *  <p>
+ * <message to='mara@example.com' type='chat'>
+ *   <retract id='id1' xmlns='urn:xmpp:call-invites:0' />
+ * </message>
+ * <p>
+ * <message to='mara@example.com' type='chat'>
+ *   <accept id='id1' xmlns='urn:xmpp:call-invites:0'>
+ *     <jingle sid='sid1' jid='mixer@example.com/uuid' />
+ *   </accept>
+ * </message>
+ *
+ * <p>
+ * <message to='mara@example.com' type='chat'>
+ *   <reject id='id1' xmlns='urn:xmpp:call-invites:0' />
+ * </message>
+ * <p>
+ * <message to='mara@example.com' type='chat'>
+ *   <left id='id1' xmlns='urn:xmpp:call-invites:0' />
+ * </message>
  */
 public final class EncryptedMessageHandler implements StanzaHandler {
 
     private static final Logger logger = Logger.getLogger(EncryptedMessageHandler.class.getName());
 
     private static final String E2EE_NS     = "urn:xmpp:e2ee:0";
+    private static final String REACTIONS_NS = "urn:xmpp:reactions:0";
     private static final String RECEIPTS_NS = "urn:xmpp:receipts";
     private static final String SERVER_RECEIPT_NS = "urn:xmpp:server:receipts";
     private static final String CHAT_NS     = "http://jabber.org/protocol/chatstates";
     private static final String MESSAGE_CORRECTION = "urn:xmpp:message-correct:0";
     private static final String REPLY_NS = "urn:xmpp:reply:0";
+    private static final String CALL_NS = "urn:xmpp:call-invites:0";
 
     private final SessionRegistry registry;
     private final DatabaseManager db;
     private final ServerMetrics metrics;
     private final ReactionHandler reactionHandler;
     private final CRDTNoteHandler crdtNoteHandler;
+    private final MessageRepository messageRepository;
 
     public EncryptedMessageHandler(SessionRegistry registry,
                           DatabaseManager db,
-                          ServerMetrics metrics, ReactionHandler reactionHandler, CRDTNoteHandler crdtNoteHandler) {
+                          ServerMetrics metrics, ReactionHandler reactionHandler, CRDTNoteHandler crdtNoteHandler, MessageRepository repository) {
         this.registry = registry;
         this.db       = db;
         this.metrics  = metrics;
         this.reactionHandler = reactionHandler;
         this.crdtNoteHandler = crdtNoteHandler;
+        this.messageRepository = repository;
     }
 
     @Override
@@ -142,6 +177,14 @@ public final class EncryptedMessageHandler implements StanzaHandler {
             return;
         }
 
+        MessageChild child = peekChild(reader);
+
+
+        if(child == null) {
+            consumeElement(reader);
+            return;
+        }
+
         try{
             XMLEvent event = reader.peek();
             if(event.isStartElement()){
@@ -155,7 +198,7 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         }
 
         // Strip resource - route to bare JID
-        String toContactId = bareJid(to); // assuming it comes in the format of u_wbcwvvc@server_name.com/mobile
+        String toContactId = bareJid(to);
         // Parse the message content
         ParsedMessage parsed = parseMessageContent(reader, id);
 
@@ -169,6 +212,22 @@ public final class EncryptedMessageHandler implements StanzaHandler {
 
         if (parsed.isChatStateOnly()) {
             routeChatState(parsed, session, toContactId, type);
+            return;
+        }
+
+        if (parsed.isDeleted()) {
+            String stanza = String.format(
+                    "<message from='%s' to='%s' type='chat'>" +
+                            "<delete xmlns='urn:xmpp:delete:0' id='%s'/>" +
+                            "</message>",
+                    escapeXml(session.getContactId()),
+                    escapeXml(toContactId),
+                    parsed.deletedMessageId()
+            );
+            registry.getByUserId(toContactId).ifPresent(s -> {
+                if(s.isAuthenticated()) s.writeXML(stanza);
+            });
+            logger.info("Delete message sent");
             return;
         }
 
@@ -196,7 +255,6 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                                      String toContactId,
                                      String type,
                                      String messageId) {
-        logger.info("The sender of the message is: "+sender.getUid() + " and the receiver is: "+toContactId);
         // Check the message keys
         /*TODO: To  be uncomment later String identityKey = parsed.identityKey();
         Optional<String> key = db.getIdentityKey(toContactId);
@@ -206,14 +264,13 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         }*/
         // Build the full stanza XML to forward/store
         String stanzaXml = buildEncryptedStanza(
-                messageId, sender.getUid(), toContactId,
+                parsed.isEdited() ? parsed.replaceId() : messageId, sender.getUid(), toContactId,
                 type, parsed
         );
 
         boolean delivered = false;
 
         // Try online delivery first
-        //java.util.Optional<Session> recipientSession = registry.getByContactId(toContactId);
         Optional<Session> recipientSession = registry.getByUserId(toContactId);
 
         if (recipientSession.isPresent() && recipientSession.get().isAuthenticated()) {
@@ -225,15 +282,10 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         } else {
             // Recipient offline - store encrypted ciphertext
             if (db.contactExists(toContactId)) {
-                boolean store = db.storeEncryptedMessage(
-                        sender.getUid(),
-                        toContactId,
-                        messageId,
-                        parsed.msgType() != null ? parsed.msgType() : "text",
-                        parsed.encryptedContent(),
-                        parsed.mimeType(),
-                        parsed.replyToId()
-                );
+                boolean store = messageRepository.insert(
+                        parsed.isEdited() ? parsed.replaceId() : messageId,
+                        sender.getUid(), toContactId, parsed.encryptedContent(),
+                        parsed.msgType(), parsed.replyToId());
 
                 if(!store){
                     logger.info("Error storing the message for offline");
@@ -247,7 +299,11 @@ public final class EncryptedMessageHandler implements StanzaHandler {
             }
         }
         // Always send server-level receipt to sender
-        sendServerReceipt(sender, messageId);
+        sendServerReceipt(sender, parsed.isEdited() ? parsed.replaceId() : messageId);
+
+        // TODO: Send notification to the receiver of the message
+        /*PushNotificationService.getInstance()
+                .sendMessageNotification(toContactId, "Abdulfattah", type);*/
     }
 
 
@@ -259,7 +315,6 @@ public final class EncryptedMessageHandler implements StanzaHandler {
     private void routeReceipt(ParsedMessage parsed,
                               Session sender,
                               String toContactId) {
-        logger.info("The sender of the receipt is: "+sender.getContactId()+" :The receiver is: "+toContactId);
         String receiptXml = String.format(
                 "<message id='%s' from='%s' to='%s'>" +
                         "<%s xmlns='%s' id='%s'/>" +
@@ -275,28 +330,11 @@ public final class EncryptedMessageHandler implements StanzaHandler {
             if(s.isAuthenticated()) {
                 boolean sent = s.writeXML(receiptXml);
                 if(!sent) {
-                    db.storeReceipt(sender.getUid(), toContactId, parsed.receiptId, parsed.receiptType);
+                    //db.storeReceipt(sender.getUid(), toContactId, parsed.receiptId, parsed.receiptType);
+                    messageRepository.insertReceipt(sender.getUid(), toContactId, parsed.receiptId(), parsed.receiptType());
                 }
             }
-        }, () -> db.storeReceipt(sender.getUid(), toContactId, parsed.receiptId, parsed.receiptType));
-
-        /*registry.getByContactId(toContactId.split("@")[0]+"@localhost").ifPresentOrElse(s -> {
-            if (s.isAuthenticated()) {
-                boolean sent =  s.writeXML(receiptXml);
-                // If the user is online, but couldn't sent
-                if(!sent){
-                    db.storeReceipt(sender.getUid(), toContactId, parsed.receiptId, parsed.receiptType);
-                }
-            }
-        }, () -> {
-            db.storeReceipt(
-                    sender.getContactId(),
-                    toContactId,
-                    parsed.receiptId,
-                    parsed.receiptType
-            );
-        });*/
-
+        }, () -> messageRepository.insertReceipt(sender.getUid(), toContactId, parsed.receiptId(), parsed.receiptType()));
     }
 
     /**
@@ -366,6 +404,15 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         sb.append(parsed.encryptedContent());
         sb.append("</encrypted>");
 
+        // Edited reference
+        if(parsed.isEdited()) {
+            sb.append(String.format("<replace xmlns='%s' id='%s'/>", MESSAGE_CORRECTION, parsed.replaceId()));
+        }
+
+        // Deleted reference
+        if(parsed.isDeleted()) {
+            sb.append(String.format("<delete xmlns='urn:xmpp:delete:0' id='%s'/>", parsed.deletedMessageId()));
+        }
         // Reply reference
         if (parsed.replyToId() != null) {
             sb.append(String.format(
@@ -378,6 +425,7 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         sb.append(String.format(
                 "<request xmlns='%s'/>", RECEIPTS_NS));
         sb.append("</message>");
+        logger.info("End of message stanza: "+sb);
         return sb.toString();
     }
 
@@ -408,6 +456,8 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         String receiptType       = null;
         String receiptId         = null;
         String chatState         = null;
+        String replaceId         = null;
+        String deletedId         = null;
 
         try {
             int depth = 1;
@@ -458,10 +508,21 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                         receiptId   = getAttr(child, "id");
                     }
 
+                    // Edited stanza
+                    else if("replace".equals(name) && MESSAGE_CORRECTION.equals(ns)){
+                        logger.info("Processing replace message");
+                        replaceId = getAttr(child, "id");
+                    }
+
                     // Read receipt
                     else if ("displayed".equals(name) && RECEIPTS_NS.equals(ns)) {
                         receiptType = "displayed";
                         receiptId   = getAttr(child, "id");
+                    }
+
+                    // Deleted message
+                    else if("delete".equals(name) && "urn:xmpp:delete:0".equals(ns)) {
+                        deletedId = getAttr(child, "id");
                     }
 
                     // Chat state notifications
@@ -482,7 +543,8 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                 encryptedContent,  msgType,
                 identityKey, mediaUrl,
                 mimeType, replyToId,
-                receiptType, receiptId, chatState
+                receiptType, receiptId, chatState,
+                replaceId, deletedId
         );
     }
 
@@ -602,7 +664,9 @@ public final class EncryptedMessageHandler implements StanzaHandler {
             String replyToId,
             String receiptType,
             String receiptId,
-            String chatState
+            String chatState,
+            String replaceId,
+            String deletedMessageId
     ) {
         boolean isReceiptOnly() {
             return receiptType != null
@@ -615,5 +679,52 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                     && encryptedContent == null
                     && receiptType == null;
         }
+
+        boolean isEdited() {
+            return replaceId != null && chatState == null;
+        }
+
+        boolean isDeleted()     { return deletedMessageId != null && chatState == null; }
     }
+
+
+    /**
+     * Represents a peeked-at child element of a Message stanza.
+     * Carries enough information to route the IQ without fully consuming it.
+     */
+    private record MessageChild(String localName, String namespace) {
+
+        /**
+         * Returns a reader that replays this child element.
+         * Used when we need to pass the full IQ body to a sub-handler.
+         * In practice we pass the live reader since we only peeked.
+         */
+        XMLEventReader replayReader(XMLEventReader original) {
+            return original;
+        }
+    }
+
+    private MessageChild peekChild(XMLEventReader reader) {
+        try{
+            while(reader.hasNext()) {
+                XMLEvent event = reader.peek();
+
+                if(event.isStartElement()) {
+                    StartElement child = event.asStartElement();
+                    String ns = child.getName().getNamespaceURI();
+                    String name = child.getName().getLocalPart();
+
+                    return new MessageChild(name, ns);
+                }
+
+                if(event.isEndElement()) return null;
+                reader.nextEvent();
+            }
+        }catch(XMLStreamException exception) {
+            logger.warning("Error peeking Message child: " + exception.getMessage());
+        }
+
+        return null;
+    }
+
 }

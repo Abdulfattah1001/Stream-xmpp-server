@@ -51,14 +51,4 @@ public final class Jdbc {
         }
         return sb.toString();
     }
-
-    /** SQLSTATE class 23 = integrity constraint violattion (duplicate key, e.t.c.).*/
-    public static boolean isDuplicateKey(SQLException e) {
-        String s = e.getSQLState(); return s != null && s.startsWith("23");
-    }
-
-    /** SQLSTATE class 40 = serialization/dealock, 08 = connection failure; safe to retry the whole TX (Transaction)*/
-    public static boolean isTransient(SQLException e) {
-        String s = e.getSQLState(); return s != null && (s.startsWith("40") || s.startsWith("08"));
-    }
 }

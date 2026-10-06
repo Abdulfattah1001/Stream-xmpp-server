@@ -246,7 +246,7 @@ public class Server {
                 config.getFcmProjectId(),
                 config.getApnsBundleId(),
                 config.isDev(),
-                db
+                db, config
         );
 
         // Voice/Video call signaling

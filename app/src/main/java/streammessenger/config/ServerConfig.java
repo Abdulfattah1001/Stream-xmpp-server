@@ -48,6 +48,8 @@ public final class ServerConfig {
     private final String twilioAccountSid;
     private final String twilioApiKey;
     private final String twilioApiSecret;
+    private final String clientEmail;
+    private final String privateKey;
 
     private ServerConfig(Builder b) {
         this.port = b.port;
@@ -76,6 +78,7 @@ public final class ServerConfig {
         this.twilioAccountSid   = b.twilioAccountSid;
         this.twilioApiKey = b.twilioApiKey;
         this.twilioApiSecret = b.twilioApiSecret;
+        this.clientEmail = b.clientEmail;  this.privateKey = b.privateKey;
     }
 
     /**
@@ -145,6 +148,8 @@ public final class ServerConfig {
                 .twilioAccountSid(props.getProperty("twilio_sid"))
                 .twilioApiKey(props.getProperty("twilio_key"))
                 .twilioApiSecret(props.getProperty("twilio_secret"))
+                .clientEmail(props.getProperty("client_email"))
+                .privateKey(props.getProperty("private_key"))
                 .build();
     }
 
@@ -241,7 +246,8 @@ public final class ServerConfig {
     public String getTwilioAccountSid()      { return twilioAccountSid; }
     public String getTwilioApiKey()         { return twilioApiKey; }
     public String getTwilioApiSecret()      { return twilioApiSecret; }
-
+    public String getClientEmail() {return clientEmail; }
+    public String getPrivateKey()   { return privateKey; }
     // -------------------------------------------------------------------------
     // Builder
     // -------------------------------------------------------------------------
@@ -274,6 +280,8 @@ public final class ServerConfig {
         private String twilioAccountSid;
         private String twilioApiKey;
         private String twilioApiSecret;
+        private String clientEmail;
+        private String privateKey;
 
         public Builder port(int v) { this.port = v; return this; }
         public Builder botApiPort(int v) { this.botApiPort = v; return this; }
@@ -305,6 +313,9 @@ public final class ServerConfig {
         public Builder twilioAccountSid(String v)   { this.twilioAccountSid = v;return this;}
         public Builder twilioApiKey(String v)   {  this.twilioApiKey = v; return this; }
         public Builder twilioApiSecret(String v)    { this.twilioApiSecret = v; return this; }
+
+        public Builder clientEmail(String v)        { this.clientEmail = v; return this;  }
+        public Builder privateKey(String v)         { this.privateKey = v; return this;  }
 
         public ServerConfig build() {
             if (sslContext == null) throw new IllegalStateException("SSLContext is required");

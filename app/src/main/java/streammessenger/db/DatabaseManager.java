@@ -2407,7 +2407,7 @@ public final class DatabaseManager {
      */
     public List<EncryptedOfflineMessage> fetchEncryptedOfflineMessages(
             String toJid) {
-        logger.info("Fetching offline messages...");
+
         String sql = """
             DELETE FROM offline_messages
             WHERE to_user_id = (
@@ -2469,7 +2469,6 @@ public final class DatabaseManager {
      * Called when the recipient's session acknowledges receipt.
      */
     public void markMessageDelivered(String messageId) {
-        logger.info("Marking message as delivered");
         String sql = """
             UPDATE offline_messages
             SET status       = 'delivered',

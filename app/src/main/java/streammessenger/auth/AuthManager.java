@@ -219,7 +219,6 @@ public final class AuthManager {
 
         // Register in secondary index for message routing by userIds
         Set<String> contacts = db.contact(validate.userId());
-        logger.info("Roster size is: "+contacts.size());
         registry.bindAuthenticatedSession(validate.contactId(), session, contacts);
         metrics.sessionAuthenticated();
 

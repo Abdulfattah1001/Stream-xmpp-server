@@ -223,6 +223,7 @@ public class Server {
         this.privacyEngine = new PrivacyEngine(db, rosterManager);
 
         GroupEventNotifier notifier = new GroupEventNotifier(groupRepository, registry);
+
         this.groupStanzaHandler = new GroupStanzaHandler(groupRepository,
                 new GroupService(groupRepository, notifier),
                 new GroupMessageRouter(groupRepository, registry, db), new GroupSyncService(groupRepository, notifier),
@@ -446,7 +447,8 @@ public class Server {
 
     private void configureSocket(Socket socket) throws IOException {
         socket.setKeepAlive(true);
-        socket.setSoTimeout(90_000);   // 90s read timeout
+        //socket.setSoTimeout(90_000);   // 90s read timeout
+        socket.setSoTimeout(35_000);
         socket.setTcpNoDelay(true);    // No Nagle - XMPP is latency sensitive
         socket.setReceiveBufferSize(8192);
         socket.setSendBufferSize(8192);

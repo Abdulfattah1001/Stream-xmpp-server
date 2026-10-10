@@ -246,7 +246,6 @@ public final class IQHandler implements StanzaHandler {
     // =========================================================================
 
     private void handlePing(String id, String from, Session session) {
-        logger.info("Handling ping ... ");
         session.writeXML(String.format(
                 "<iq type='result' id='%s'%s/>",
                 id != null ? escapeXml(id) : "",

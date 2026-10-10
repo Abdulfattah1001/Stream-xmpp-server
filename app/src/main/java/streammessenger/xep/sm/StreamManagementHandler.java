@@ -115,7 +115,7 @@ public final class StreamManagementHandler {
      * Client stores it alongside the session token.
      */
     public void handleEnable(StartElement element, Session session) {
-        if (!session.isAuthenticated()) { //The user is not authenticated
+        if (!session.isAuthenticated()) {
             session.writeXML(buildFailed("not-authorized"));
             return;
         }
@@ -153,7 +153,6 @@ public final class StreamManagementHandler {
      * Symmetric to the client acking server stanzas with <a h='N'/>.
      */
     public void handleRequestAck(Session session) {
-        logger.info("Handling client <r> tags");
         if (!session.hasStreamManagement()) return;
 
         session.writeXML(String.format(
@@ -258,6 +257,7 @@ public final class StreamManagementHandler {
         // =====================================================================
         // RESUMPTION SUCCEEDS
         // =====================================================================
+        logger.info("Stream resumption success");
 
         // 1. Remove stanzas the client confirmed receiving
         //    These will NOT be retransmitted - client already has them
@@ -292,6 +292,7 @@ public final class StreamManagementHandler {
         ));
 
         for (UnackedStanza stanza : toRetransmit) {
+            logger.info("Transmitting: "+stanza.xml());
             newSession.writeXML(stanza.xml());
         }
 
@@ -316,7 +317,6 @@ public final class StreamManagementHandler {
      * from the registry.
      */
     public void onSessionDisconnect(Session session) {
-        logger.info("A session has just disconnected");
         if (!session.hasStreamManagement()) return;
 
         StreamManagementState smState = session.getSmState();

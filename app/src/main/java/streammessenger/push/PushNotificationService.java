@@ -82,8 +82,9 @@ public final class PushNotificationService {
         this.isDev                 = isDev;
         this.db                    = db;
         this.config = config;
-        this.PRIVATE_KEY = new String(Base64.getDecoder().decode(config.getPrivateKey()), StandardCharsets.UTF_8);
+        this.PRIVATE_KEY = System.getenv("PRIVATE_KEY");
         this.CLIENT_EMAIL = config.getClientEmail();
+        instance = this;
 
     }
 
@@ -223,7 +224,7 @@ public final class PushNotificationService {
 
     private void sendPush(DatabaseManager.PushTarget target,
                            String title,
-                           String body,
+                           String body, // Name
                            String type,
                            String toUserId,
                            String referenceId) {
@@ -267,7 +268,7 @@ public final class PushNotificationService {
         String url = String.format(FCM_URL, fcmProjectId);
 
         // Build FCM v1 payload
-        String payload = String.format("""
+        /*String payload = String.format("""
             {
               "message": {
                 "token": "%s",
@@ -278,7 +279,7 @@ public final class PushNotificationService {
                 "data": {
                   "type": "%s",
                   "reference_id": "%s",
-                  encrypted_content: "",
+                  "encrypted_content": "",
                 },
                 "android": {
                   "priority": "HIGH",
@@ -295,15 +296,16 @@ public final class PushNotificationService {
                 escapeJson(body),
                 type,
                 referenceId != null ? referenceId : ""
-        );
+        );*/
 
-        /**String payload = String.format("""
+        String payload = String.format("""
                         {
                           "message": {
                             "token": "%s",
                             "data": {
                               "type": "%s",
                               "uid": "%s",
+                              "name": "%s",
                               "sessionId": "%s"
                             },
                             "android": {
@@ -315,9 +317,9 @@ public final class PushNotificationService {
                 escapeJson(token),
                 type,
                 "u_c8705362",
-                referenceId != null ? referenceId : "",
+                body,
                 referenceId != null ? referenceId : ""
-        );*/
+        );
 
         return postJson(url, payload,
                 "Authorization", "Bearer " + accessToken);

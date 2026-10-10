@@ -305,6 +305,7 @@ public final class ConnectionHandler implements Runnable {
      * Ensures the session is removed from the registry and metrics decremented.
      */
     private void cleanup(Session session) {
+        streamProcessor.onSessionDisconnect(session);
         registry.remove(session);
 
         if (session.isAuthenticated()) {

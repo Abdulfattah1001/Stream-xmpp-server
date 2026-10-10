@@ -163,11 +163,15 @@ public class Session {
         writeLock.lock();
         try {
             OutputStream os = resolveOutputStream();
-            if (os == null) return false;
+            if (os == null) {
+                closeQuietly();
+                return false;
+            }
 
             // If SM is active and this looks like a stanza (not a SM control frame),
             // add to unacked queue before sending
             if (smState != null && smState.isEnabled() && isStanza(xml)) {
+                logger.info("Tracking outbound stanza: "+xml);
                 smState.trackOutbound(xml);
             }
 
@@ -179,6 +183,8 @@ public class Session {
 
         } catch (IOException e) {
             logger.warning("Write failed sessionId=" + sessionId + ": " + e.getMessage());
+            // Critical fix
+            closeQuietly();
             return false;
         } finally {
             writeLock.unlock();

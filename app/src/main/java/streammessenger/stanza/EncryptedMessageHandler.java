@@ -9,10 +9,14 @@ import javax.xml.stream.events.XMLEvent;
 
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.logging.Logger;
 
+import streammessenger.call.CallSignalingHandler;
 import streammessenger.db.DatabaseManager;
 import streammessenger.metrics.ServerMetrics;
 import streammessenger.push.PushNotificationService;
@@ -93,7 +97,7 @@ import streammessenger.session.SessionRegistry;
  *   <p>
  *   <b>Support for ADVANCE MESSAGE PROCESSING XEP 0079</b>
  *   <i>A protocol that enables an end-to-end entity to specify additional
- *   sematics for XMPP <message/> stanza. This protocol is typically used by client to inform
+ *   semantics for XMPP <message/> stanza. This protocol is typically used by client to inform
  *   the receiving server or client how to deliver or render s particular stanza,
  *   such as providing an expiration time or resource-matching strategy
  *   </i>
@@ -145,6 +149,16 @@ public final class EncryptedMessageHandler implements StanzaHandler {
     private final ReactionHandler reactionHandler;
     private final CRDTNoteHandler crdtNoteHandler;
     private final MessageRepository messageRepository;
+    private final ConcurrentHashMap<String, CallState> activeCalls =
+            new ConcurrentHashMap<>();
+    private final ScheduledExecutorService scheduler =
+            Executors.newScheduledThreadPool(2, r -> {
+                Thread t = new Thread(r, "call-scheduler");
+                t.setDaemon(true);
+                return t;
+            });
+    private final ConcurrentHashMap<String, ScheduledFuture<?>> ringTimeout =
+            new ConcurrentHashMap<>();
 
     public EncryptedMessageHandler(SessionRegistry registry,
                           DatabaseManager db,
@@ -173,14 +187,6 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         if (id == null) id = UUID.randomUUID().toString();
 
         if (to == null || to.isBlank()) {
-            consumeElement(reader);
-            return;
-        }
-
-        MessageChild child = peekChild(reader);
-
-
-        if(child == null) {
             consumeElement(reader);
             return;
         }
@@ -228,6 +234,92 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                 if(s.isAuthenticated()) s.writeXML(stanza);
             });
             logger.info("Delete message sent");
+            return;
+        }
+
+        if(parsed.isCallType()) {
+            String stanza = "";
+            String callId = UUID.randomUUID().toString();
+
+            switch (parsed.callAction()) {
+                case "invite" ->    {
+                    logger.info("Call initiate sessionId is: "+parsed.callId());
+                    stanza = String.format("""
+                            <message type='chat' from='%s' id='%s'>
+                                <invite xmlns='urn:xmpp:call-invites:0'>
+                                    <room-name>%s</room-name>
+                                    <sid>%s</sid>
+                                </invite>
+                            </message>
+                            """,  session.getUid(), callId,
+                            parsed.roomName(), parsed.callId());
+                }
+                case "ringing" ->   {
+                    logger.info("Call ringing sessionId is: "+parsed.callId());
+                    stanza = String.format("""
+                            <message type='chat' from='%s' id='%s'>
+                                <ringing xmlns='urn:xmpp:call-invites:0'>
+                                    <sid>%s</sid>
+                                </ringing>
+                            </message>
+                            """,  session.getUid(), callId,
+                            parsed.callId());
+                }
+                case "accept" ->    {
+                    logger.info("Call accept sessionId is: "+parsed.callId());
+                    stanza = String.format("""
+                            <message type='chat' from='%s' id='%s'>
+                                <accept xmlns='urn:xmpp:call-invites:0'>
+                                    <sid>%s</sid>
+                                </accept>
+                            </message>
+                            """,  session.getUid(), callId,
+                            parsed.callId());
+                }
+                case "reject"   ->  {
+                    stanza = String.format("""
+                            <message type='chat' from='%s' id='%s'>
+                                <reject xmlns='urn:xmpp:call-invites:0'>
+                                    <sid>%s</sid>
+                                </reject>
+                            </message>
+                            """,  session.getUid(), callId,
+                            parsed.callId());
+                }
+                case "left"     ->  {
+                    stanza = String.format("""
+                            <message type='chat' from='%s' id='%s'>
+                                <left xmlns='urn:xmpp:call-invites:0'>
+                                    <sid>%s</sid>
+                                </left>
+                            </message>
+                            """,  session.getUid(), callId,
+                            parsed.callId());
+                }
+
+                case "ended" -> {
+                    logger.info("Routing call ended stanza ....");
+                    stanza = String.format("""
+                            <message type='chat' from='%s' to='%s' id='%s'>
+                                <call xmlns='urn:xmpp:call:1' sid='%s' action='ended' media='video' duration='%d'/>
+                            </message>
+                            """, session.getUid(), toContactId, callId,  parsed.callId(), parsed.callDuration());
+                }
+            }
+
+            String xml = stanza;
+
+
+            registry.getByUserId(toContactId).ifPresent(s -> {
+                if(s.isAuthenticated()) s.writeXML(xml);
+            });
+
+            logger.info("Call XML sent is: "+stanza);
+
+            if("invite".equals(parsed.callAction())) {
+                PushNotificationService.getInstance()
+                        .sendPushCallNotification(toContactId, parsed.roomName(), "video", parsed.callId());
+            }
             return;
         }
 
@@ -330,7 +422,6 @@ public final class EncryptedMessageHandler implements StanzaHandler {
             if(s.isAuthenticated()) {
                 boolean sent = s.writeXML(receiptXml);
                 if(!sent) {
-                    //db.storeReceipt(sender.getUid(), toContactId, parsed.receiptId, parsed.receiptType);
                     messageRepository.insertReceipt(sender.getUid(), toContactId, parsed.receiptId(), parsed.receiptType());
                 }
             }
@@ -359,10 +450,6 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         registry.getByUserId(toContactId).ifPresent(s -> {
             if(s.isAuthenticated()) s.writeXML(stanza);
         });
-
-        /*registry.getByContactId(toContactId).ifPresent(s -> {
-            if (s.isAuthenticated()) s.writeXML(stanza);
-        });*/
     }
 
     // =========================================================================
@@ -458,6 +545,11 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         String chatState         = null;
         String replaceId         = null;
         String deletedId         = null;
+        boolean isCall           = false;
+        String callAction        = null;
+        String roomName          = null;
+        String callId            = null;
+        long callDuration        = 0L;
 
         try {
             int depth = 1;
@@ -529,6 +621,59 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                     else if (CHAT_NS.equals(ns)) {
                         chatState = name; // composing|paused|active|inactive|gone
                     }
+
+                    else if("invite".equals(name) && CALL_NS.equals(ns)) {
+                        logger.info("Call namespace encountered: invite");
+                        // The jingle child is empty here, the server populates it later on
+                        callAction = "invite";
+                        isCall = true;
+                    }
+
+                    else if("room-name".equals(name) && CALL_NS.equals(ns)) {
+                        logger.info("Reading room-name");
+                        roomName = readText(reader);
+                        depth--;
+                    }
+                    else if("call".equals(name)){
+                        isCall = true;
+                        callAction = getAttr(child, "action");
+                        callId =getAttr(child, "sid");
+                        callDuration = Long.parseLong(getAttr(child,"duration"));
+                    }
+
+                    else if("sid".equals(name) && CALL_NS.equals(ns)) {
+                        logger.info("Call namespace encountered: sid");
+                        // The jingle child is empty here, the server populates it later on
+                        callId = readText(reader);
+                        depth--;
+                    }
+
+                    else if("accept".equals(name) && CALL_NS.equals(ns)) {
+                        logger.info("Accept namespace encountered");
+                        // The jingle child is empty here, the server populates it later on
+                        callAction = "accept";
+                        isCall = true;
+                    }
+
+                    else if("reject".equals(name) && CALL_NS.equals(ns)) {
+                        logger.info("Reject namespace encountered");
+                        // The jingle child is empty here, the server populates it later on
+                        callAction = "reject";
+                        isCall = true;
+                    }
+
+                    else if("ringing".equals(name) && CALL_NS.equals(ns)) {
+                        logger.info("Ringing call namespace encountered");
+                        // The jingle child is empty here, the server populates it later on
+                        callAction = "ringing";
+                        isCall = true;
+                    }
+                    else if("left".equals(name) && CALL_NS.equals(ns)) {
+                        logger.info("Left call namespace encountered");
+                        // The jingle child is empty here, the server populates it later on
+                        callAction = "left";
+                        isCall = true;
+                    }
                 }
 
                 if (event.isEndElement()) {
@@ -544,7 +689,8 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                 identityKey, mediaUrl,
                 mimeType, replyToId,
                 receiptType, receiptId, chatState,
-                replaceId, deletedId
+                replaceId, deletedId, isCall, callAction,  roomName,
+                callId, callDuration
         );
     }
 
@@ -651,6 +797,12 @@ public final class EncryptedMessageHandler implements StanzaHandler {
                 .replace(">", "&gt;").replace("'", "&apos;");
     }
 
+    private boolean isInActiveCall(String userId) {
+        return activeCalls.values().stream().anyMatch(state ->
+                state.callerId().equals(userId)
+                        || state.calleeId().equals(userId));
+    }
+
     // =========================================================================
     // Inner type
     // =========================================================================
@@ -666,7 +818,12 @@ public final class EncryptedMessageHandler implements StanzaHandler {
             String receiptId,
             String chatState,
             String replaceId,
-            String deletedMessageId
+            String deletedMessageId,
+            boolean isCallType,
+            String callAction,
+            String roomName,
+            String callId,
+            long callDuration
     ) {
         boolean isReceiptOnly() {
             return receiptType != null
@@ -725,6 +882,30 @@ public final class EncryptedMessageHandler implements StanzaHandler {
         }
 
         return null;
+    }
+
+
+    private record CallState(
+            String callId,
+            String callerId,
+            String callerJid,
+            String calleeId,
+            String calleeJid,
+            String callType,
+            long startedAt,
+            String state
+    ) {
+        CallState(String callId, String callerId, String callerJid,
+                  String calleeId, String calleeJid,
+                  String callType, long startedAt) {
+            this(callId, callerId, callerJid, calleeId, calleeJid,
+                    callType, startedAt, "ringing");
+        }
+
+        CallState withState(String newState) {
+            return new CallState(callId, callerId, callerJid,
+                    calleeId, calleeJid, callType, startedAt, newState);
+        }
     }
 
 }

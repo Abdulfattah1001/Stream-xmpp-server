@@ -193,6 +193,7 @@ public final class CallSignalingHandler implements StanzaHandler {
         String callId = UUID.randomUUID().toString();
         String roomName = "call-"+callId;
 
+
         // Check caller not already in a call
         if (isInActiveCall(callerId)) {
             logger.info("Already in a call...");
